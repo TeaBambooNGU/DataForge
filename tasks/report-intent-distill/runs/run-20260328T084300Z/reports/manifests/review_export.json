@@ -1,0 +1,17 @@
+{
+  "task_name": "report-intent-distill",
+  "run_id": "run-20260328T084300Z",
+  "stage_name": "review_export",
+  "runtime": {},
+  "input_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T084300Z/processed/labelstudio_import.json"
+  ],
+  "output_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T084300Z/processed/review_candidates.jsonl"
+  ],
+  "stats": {
+    "review_candidates": 1
+  },
+  "errors": [],
+  "completed_at": "2026-03-28T08:43:08.723753+00:00"
+}

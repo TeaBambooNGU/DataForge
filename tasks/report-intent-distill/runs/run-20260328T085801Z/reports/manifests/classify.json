@@ -1,0 +1,32 @@
+{
+  "task_name": "report-intent-distill",
+  "run_id": "run-20260328T085801Z",
+  "stage_name": "classify",
+  "runtime": {
+    "provider": "openai_compatible",
+    "model": "gpt-5.3-codex",
+    "temperature": 0.0,
+    "seed": 42,
+    "batch_size": 64,
+    "retry_policy": "strict_json",
+    "prompt_version": "v1",
+    "base_url_env": "OPENAI_BASE_URL",
+    "api_key_env": "OPENAI_API_KEY",
+    "response_format_json_object": true,
+    "max_retries": 2,
+    "retry_backoff_seconds": 1.0,
+    "max_retry_backoff_seconds": 8.0
+  },
+  "input_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T085801Z/raw/raw_candidates.jsonl"
+  ],
+  "output_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T085801Z/raw/teacher_labeled.jsonl"
+  ],
+  "stats": {
+    "classified_samples": 8,
+    "parse_failures": 0
+  },
+  "errors": [],
+  "completed_at": "2026-03-28T09:00:25.791882+00:00"
+}

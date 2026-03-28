@@ -1,0 +1,2 @@
+Generate realistic Chinese user utterances for report-intent classification.
+Keep phrasing natural and concise, and include colloquial follow-up language when needed.

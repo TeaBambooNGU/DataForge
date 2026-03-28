@@ -1,0 +1,2 @@
+{"id": "report-intent-distill-000007", "input": "先把这版留档吧，我看了下刚出的消息口径有变化，你基于我们刚那份 AI 基建专题按最新信息再跑一版，重点结论也顺手更新下。", "expected": "regenerate_report"}
+{"id": "report-intent-distill-000008", "input": "我这边先不看原文了，你直接按正式汇报的口吻重新写一版，顺带把重点和结论再理清楚一点，最好还能兼顾给领导过目和对外发。", "expected": "chat"}

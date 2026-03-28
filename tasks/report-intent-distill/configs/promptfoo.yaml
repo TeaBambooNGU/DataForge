@@ -1,0 +1,5 @@
+description: report-intent-distill promptfoo placeholder
+providers:
+  - id: mock
+prompts:
+  - file://tasks/report-intent-distill/configs/teacher_prompt.txt

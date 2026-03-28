@@ -1,0 +1,1 @@
+{"id": "report-intent-distill-000007", "input": "这版先留着，再按今天的新消息重跑一个版本", "expected": "regenerate_report"}

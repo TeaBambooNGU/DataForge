@@ -1,0 +1,71 @@
+[
+  {
+    "id": "report-intent-distill-000007",
+    "task_name": "report-intent-distill",
+    "theme": "report_intent_classification",
+    "stage": "classified",
+    "context": {
+      "has_visible_report": true,
+      "previous_report_summary": "已生成一版 AI 基建专题",
+      "dialogue_stage": "followup",
+      "language": "zh"
+    },
+    "input": {
+      "user_text": "先把这版留档吧，我看了下刚出的消息口径有变化，你基于我们刚那份 AI 基建专题按最新信息再跑一版，重点结论也顺手更新下。"
+    },
+    "metadata": {
+      "source": "synthetic",
+      "difficulty": "hard",
+      "tags": [
+        "ambiguous",
+        "multi_intent",
+        "latest_info_request",
+        "has_reference"
+      ],
+      "label_hint": "regenerate_report"
+    },
+    "annotation": {
+      "teacher_label": "regenerate_report",
+      "teacher_raw_output": "{\"action\":\"regenerate_report\"}",
+      "parse_ok": true,
+      "error_code": null,
+      "human_label": null,
+      "review_status": "unreviewed",
+      "final_label": null
+    }
+  },
+  {
+    "id": "report-intent-distill-000008",
+    "task_name": "report-intent-distill",
+    "theme": "report_intent_classification",
+    "stage": "classified",
+    "context": {
+      "has_visible_report": false,
+      "previous_report_summary": "",
+      "dialogue_stage": "standalone",
+      "language": "zh"
+    },
+    "input": {
+      "user_text": "我这边先不看原文了，你直接按正式汇报的口吻重新写一版，顺带把重点和结论再理清楚一点，最好还能兼顾给领导过目和对外发。"
+    },
+    "metadata": {
+      "source": "synthetic",
+      "difficulty": "hard",
+      "tags": [
+        "ambiguous",
+        "multi_intent",
+        "no_reference"
+      ],
+      "label_hint": "rewrite_report"
+    },
+    "annotation": {
+      "teacher_label": "chat",
+      "teacher_raw_output": "{\"action\":\"chat\"}",
+      "parse_ok": true,
+      "error_code": null,
+      "human_label": null,
+      "review_status": "unreviewed",
+      "final_label": null
+    }
+  }
+]

@@ -1,0 +1,50 @@
+name: report-intent-distill
+theme: report_intent_classification
+language: zh
+task_type: classification
+entry_schema: conversation_action
+runtime:
+  generator:
+    provider: minimax
+    model: MiniMax-M2.7
+    temperature: 0.0
+    seed: 42
+    batch_size: 32
+    retry_policy: none
+    prompt_version: v1
+    max_tokens: 1024
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+    max_retry_backoff_seconds: 8.0
+  teacher:
+    provider: minimax
+    model: MiniMax-M2.7
+    temperature: 0.0
+    seed: 42
+    batch_size: 64
+    retry_policy: strict_json
+    prompt_version: v1
+    max_tokens: 1024
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+    max_retry_backoff_seconds: 8.0
+  eval:
+    provider: minimax
+    model: MiniMax-M2.7
+    temperature: 0.0
+    prompt_version: v1
+    max_tokens: 1024
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+    max_retry_backoff_seconds: 8.0
+paths:
+  labels: tasks/report-intent-distill/configs/labels.yaml
+  scenario_matrix: tasks/report-intent-distill/configs/scenario_matrix.yaml
+  generator_prompt: tasks/report-intent-distill/configs/generator_prompt.txt
+  teacher_prompt: tasks/report-intent-distill/configs/teacher_prompt.txt
+  promptfoo: tasks/report-intent-distill/configs/promptfoo.yaml
+rules:
+  disallow_rewrite_without_visible_report: true
+exports:
+  train_format: chatml_jsonl
+  eval_format: promptfoo_jsonl

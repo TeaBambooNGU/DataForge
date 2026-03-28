@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from dataforge.core.io import read_jsonl, write_jsonl, write_run_manifest
+from dataforge.core.registry import TaskRun
+from dataforge.core.review import apply_review_record, validate_review_records
+from dataforge.core.schemas import validate_samples
+
+
+def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, Path]:
+    source = review_results_path or task.path_for("review_results")
+    review_records = read_jsonl(source)
+    validate_review_records(review_records)
+    classified_samples = read_jsonl(task.path_for("teacher_labeled"))
+    sample_map = {sample["id"]: sample for sample in classified_samples}
+    gold_samples = []
+    hard_cases = []
+
+    for record in review_records:
+        sample = sample_map.get(record["sample_id"])
+        if sample is None:
+            raise ValueError(f"Review sample_id not found in teacher_labeled set: {record['sample_id']}")
+
+        reviewed_sample = apply_review_record(sample, record)
+        review_status = reviewed_sample["annotation"]["review_status"]
+        if review_status not in {"accepted", "corrected"}:
+            continue
+        final_label = reviewed_sample["annotation"]["human_label"]
+        gold_sample = {
+            **reviewed_sample,
+            "stage": "gold",
+            "annotation": {
+                **reviewed_sample["annotation"],
+                "review_status": "gold_frozen",
+                "final_label": final_label,
+            },
+        }
+        gold_samples.append(gold_sample)
+        tags = set(reviewed_sample.get("metadata", {}).get("tags", []))
+        if tags & {"ambiguous", "multi_intent"} or reviewed_sample.get("metadata", {}).get("difficulty") == "hard":
+            hard_cases.append(gold_sample)
+
+    validate_samples(gold_samples)
+    gold_path = task.path_for("gold_eval")
+    hard_cases_path = task.path_for("hard_cases")
+    write_jsonl(gold_path, gold_samples)
+    write_jsonl(hard_cases_path, hard_cases)
+    manifest_path = task.path_for("build_gold_manifest")
+    manifest = write_run_manifest(
+        manifest_path,
+        task_name=task.name,
+        stage_name="build_gold",
+        runtime={},
+        input_paths=[str(source)],
+        output_paths=[str(gold_path), str(hard_cases_path)],
+        stats={"gold_samples": len(gold_samples), "hard_cases": len(hard_cases)},
+        run_id=task.run_id,
+    )
+    task.record_stage("build_gold", manifest, manifest_path)
+    return {"gold_eval": gold_path, "hard_cases": hard_cases_path}

@@ -1,0 +1,30 @@
+{
+  "task_name": "report-intent-distill",
+  "run_id": "run-20260328T094954Z",
+  "stage_name": "classify",
+  "runtime": {
+    "provider": "minimax",
+    "model": "MiniMax-M2.7",
+    "temperature": 0.0,
+    "seed": 42,
+    "batch_size": 64,
+    "retry_policy": "strict_json",
+    "prompt_version": "v1",
+    "max_tokens": 1024,
+    "max_retries": 2,
+    "retry_backoff_seconds": 1.0,
+    "max_retry_backoff_seconds": 8.0
+  },
+  "input_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T094954Z/raw/raw_candidates.jsonl"
+  ],
+  "output_paths": [
+    "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260328T094954Z/raw/teacher_labeled.jsonl"
+  ],
+  "stats": {
+    "classified_samples": 8,
+    "parse_failures": 0
+  },
+  "errors": [],
+  "completed_at": "2026-03-28T09:52:00.069291+00:00"
+}

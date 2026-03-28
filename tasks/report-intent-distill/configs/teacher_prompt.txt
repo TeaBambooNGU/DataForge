@@ -1,0 +1,7 @@
+Classify each user utterance into exactly one label:
+- chat
+- rewrite_report
+- regenerate_report
+
+Return one-line JSON like {"action":"chat"}.
+If there is no visible report, rewrite_report is not allowed.
