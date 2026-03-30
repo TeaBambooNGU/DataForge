@@ -1,11 +1,12 @@
 from pathlib import Path
 
+from dataforge.core.io import write_json
 from dataforge.core.io import read_jsonl, write_jsonl
 from dataforge.core.registry import create_task_run, load_task_config
 from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, validate_review
 
 
-def test_pipeline_smoke(tmp_path: Path) -> None:
+def test_pipeline_smoke(tmp_path: Path, monkeypatch) -> None:
     project_root = Path(".")
     task = load_task_config(project_root, "report-intent-distill")
     task.task_root = tmp_path / "report-intent-distill"
@@ -13,6 +14,19 @@ def test_pipeline_smoke(tmp_path: Path) -> None:
     task.config["runtime"]["teacher"]["provider"] = "mock"
     task.config["runtime"]["eval"]["provider"] = "mock"
     run = create_task_run(task, "run-smoke-001")
+
+    def fake_promptfoo_eval(command, config_path, results_path, *, cwd, runner=None):
+        write_json(results_path, {"summary": {"passRate": 1.0}, "results": []})
+        return {
+            "status": "ok",
+            "command": [*command, "eval", "-c", str(config_path), "--output", str(results_path), "--no-cache"],
+            "results_path": str(results_path),
+            "stdout": "promptfoo ok",
+            "stderr": "",
+            "summary": {"passRate": 1.0},
+        }
+
+    monkeypatch.setattr(eval_pipeline, "run_promptfoo_eval", fake_promptfoo_eval)
 
     raw_path = generate.run(run)
     labeled_path = classify.run(run, input_path=raw_path)
@@ -59,6 +73,8 @@ def test_pipeline_smoke(tmp_path: Path) -> None:
     assert run.path_for("gold_eval").exists()
     assert Path(review_validation["review_validation_report"]).exists()
     assert Path(eval_outputs["eval_summary"]).exists()
+    assert Path(eval_outputs["promptfoo_config"]).exists()
+    assert Path(eval_outputs["promptfoo_results"]).exists()
     assert gold_samples
     assert len({sample["id"] for sample in gold_samples}) == len(gold_samples)
     if review_rows:

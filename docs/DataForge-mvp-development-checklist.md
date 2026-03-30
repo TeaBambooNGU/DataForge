@@ -63,18 +63,18 @@
 
 ### 3.1 Phase 3 未收尾项
 
-- [ ] Promptfoo 仅完成“数据导出”，未完成“真实执行”
-  - 当前状态：代码会产出 `eval_for_promptfoo.jsonl`，但不会读取并执行 `promptfoo.yaml`
-  - 目标状态：平台可基于任务的 `promptfoo.yaml` 真实运行评测，并将结果汇总进当前 run
+- [x] Promptfoo 真执行链路已接通
+  - 当前状态：`eval` 阶段会导出 Promptfoo tests、生成运行时 config、执行 `promptfoo eval` 并回收结果
+  - 当前约束：默认通过 `npx --yes promptfoo@latest` 调用；若运行环境缺少 Node / 网络或任务配置不合法，Promptfoo 阶段会失败
 
 - [ ] review 历史记录已保存，但 gold merge 规则未完整实现
   - 当前状态：`review_history` 会写入样本
   - 当前缺口：`build_gold` 仍按 review 记录逐条处理，没有先按 `sample_id` 聚合并取最后一次有效人工结论
   - 风险：同一样本多轮 review 时，可能重复进入 gold，或不符合设计中的 merge 规则
 
-- [ ] 评测报告只覆盖平台内置指标，未形成完整 Promptfoo 集成报告
-  - 当前状态：已有 accuracy、macro F1、per-class、JSON valid rate、hard cases accuracy、`has_visible_report=false` 子集准确率
-  - 当前缺口：没有外部 Promptfoo 结果回收，也没有和任务 `promptfoo.yaml` 形成闭环
+- [x] 评测报告已接入 Promptfoo 运行状态
+  - 当前状态：`eval_summary.md` 会追加 Promptfoo 执行状态与结果路径
+  - 当前缺口：Promptfoo 结果当前只做轻量汇总，尚未做更深的结构化解析
 
 ## 4. 未完成能力
 
@@ -108,7 +108,7 @@
 
 ### P0：先补 Phase 3 闭环缺口
 
-- [ ] 任务 1：补齐 Promptfoo 真执行链路
+- [x] 任务 1：补齐 Promptfoo 真执行链路
   - 目标：从“导出 promptfoo 数据”升级为“执行任务自带 `promptfoo.yaml` 并回收结果”
   - 建议修改：
     - `src/dataforge/pipelines/eval.py`
@@ -236,10 +236,10 @@
 
 如果只选一个最值得优先做的任务，建议下一步做：
 
-- [ ] `P0 / 任务 1：补齐 Promptfoo 真执行链路`
+- [ ] `P0 / 任务 3：补齐评测结果回写与 run 摘要`
 
 原因：
 
-1. 多轮 review merge 已补上，当前最大的 Phase 3 缺口变成 Promptfoo 只导出不执行。
-2. 它会直接影响设计文档里“Promptfoo 评测报告”是否真正闭环。
-3. 完成它之后，Phase 3 的剩余缺口会更清晰，便于再推进训练出口。
+1. 多轮 review merge 和 Promptfoo 真执行链路都已补上，Phase 3 剩余缺口主要在结果摘要和回放信息不足。
+2. 这一步能把 Promptfoo 结果、eval 结果和 run manifest 进一步打通。
+3. 完成它之后，再推进训练出口会更稳，不容易返工。

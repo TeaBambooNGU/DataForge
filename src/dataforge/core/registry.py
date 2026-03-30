@@ -40,6 +40,8 @@ RUN_ARTIFACT_PATHS = {
     "hard_cases": "gold/hard_cases.jsonl",
     "eval_for_promptfoo": "exports/eval_for_promptfoo.jsonl",
     "eval_predictions": "exports/eval_predictions.jsonl",
+    "promptfoo_config": "reports/promptfoo/config.yaml",
+    "promptfoo_results": "reports/promptfoo/results.json",
     "eval_summary": "reports/eval_summary.md",
     "confusion_analysis": "reports/confusion_analysis.md",
     "review_validation_report": "reports/review_validation.md",

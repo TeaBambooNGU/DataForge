@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dataforge.core.eval_runner import evaluate_predictions, export_eval_predictions, export_promptfoo_eval, write_eval_reports
+from dataforge.core.eval_runner import (
+    build_promptfoo_runtime_config,
+    evaluate_predictions,
+    export_eval_predictions,
+    export_promptfoo_eval,
+    run_promptfoo_eval,
+    write_eval_reports,
+)
 from dataforge.core.io import read_jsonl, write_run_manifest
 from dataforge.core.registry import TaskRun
 from dataforge.providers import get_eval_provider
@@ -36,9 +43,22 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
     predictions_path = task.path_for("eval_predictions")
     summary_path = task.path_for("eval_summary")
     confusion_path = task.path_for("confusion_analysis")
-    export_promptfoo_eval(promptfoo_export_path, gold_samples)
+    promptfoo_runtime_config_path = task.run_root / "reports" / "promptfoo" / "config.yaml"
+    promptfoo_results_path = task.run_root / "reports" / "promptfoo" / "results.json"
+    export_promptfoo_eval(promptfoo_export_path, eval_rows)
     export_eval_predictions(predictions_path, eval_rows)
-    write_eval_reports(summary_path, confusion_path, metrics)
+    promptfoo_runtime = build_promptfoo_runtime_config(
+        task.path_for("promptfoo"),
+        promptfoo_export_path,
+        promptfoo_runtime_config_path,
+    )
+    promptfoo_summary = run_promptfoo_eval(
+        promptfoo_runtime["command"],
+        promptfoo_runtime_config_path,
+        promptfoo_results_path,
+        cwd=task.project_root,
+    )
+    write_eval_reports(summary_path, confusion_path, metrics, promptfoo_summary=promptfoo_summary)
 
     manifest_path = task.path_for("eval_manifest")
     manifest = write_run_manifest(
@@ -47,7 +67,14 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
         stage_name="eval",
         runtime=task.runtime.get("eval", {}),
         input_paths=[str(gold_source)],
-        output_paths=[str(promptfoo_export_path), str(predictions_path), str(summary_path), str(confusion_path)],
+        output_paths=[
+            str(promptfoo_export_path),
+            str(predictions_path),
+            str(promptfoo_runtime_config_path),
+            str(promptfoo_results_path),
+            str(summary_path),
+            str(confusion_path),
+        ],
         stats=metrics,
         run_id=task.run_id,
     )
@@ -55,6 +82,8 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
     return {
         "eval_for_promptfoo": promptfoo_export_path,
         "eval_predictions": predictions_path,
+        "promptfoo_config": promptfoo_runtime_config_path,
+        "promptfoo_results": promptfoo_results_path,
         "eval_summary": summary_path,
         "confusion_analysis": confusion_path,
     }

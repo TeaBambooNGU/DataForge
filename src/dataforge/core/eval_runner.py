@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from dataforge.core.io import write_jsonl, write_text
+from dataforge.core.io import read_yaml, write_json, write_jsonl, write_text, write_yaml
+
+
+class PromptfooExecutionError(RuntimeError):
+    pass
 
 
 def _safe_div(numerator: float, denominator: float) -> float:
@@ -74,14 +80,35 @@ def evaluate_predictions(eval_rows: list[dict], hard_case_ids: set[str]) -> dict
     }
 
 
-def export_promptfoo_eval(path: Path, gold_samples: list[dict]) -> None:
+def export_promptfoo_eval(path: Path, eval_rows: list[dict[str, Any]]) -> None:
     rows = []
-    for sample in gold_samples:
+    for row in eval_rows:
         rows.append(
             {
-                "id": sample["id"],
-                "input": sample["input"]["user_text"],
-                "expected": sample["annotation"]["final_label"],
+                "vars": {
+                    "id": row["id"],
+                    "input": row["user_text"],
+                    "expected": row["expected_label"],
+                    "predicted_label": row["predicted_label"],
+                    "predicted_json": json.dumps(
+                        {"action": row["predicted_label"]},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+                "assert": [
+                    {"type": "is-json"},
+                    {
+                        "type": "javascript",
+                        "value": "JSON.parse(output).action === context.vars.expected",
+                    },
+                ],
+                "metadata": {
+                    "difficulty": row.get("difficulty"),
+                    "tags": row.get("tags", []),
+                    "has_visible_report": row.get("has_visible_report"),
+                    "parse_ok": row.get("parse_ok"),
+                },
             }
         )
     write_jsonl(path, rows)
@@ -91,10 +118,83 @@ def export_eval_predictions(path: Path, rows: list[dict]) -> None:
     write_jsonl(path, rows)
 
 
+def build_promptfoo_runtime_config(
+    promptfoo_config_path: Path,
+    promptfoo_tests_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    config = read_yaml(promptfoo_config_path)
+    dataforge_config = config.pop("dataforge", {})
+
+    tests_ref = f"file://{promptfoo_tests_path}"
+    current_tests = config.get("tests")
+    if isinstance(current_tests, str):
+        placeholder = "__DATAFORGE_EVAL_FOR_PROMPTFOO__"
+        config["tests"] = current_tests.replace(placeholder, str(promptfoo_tests_path))
+    else:
+        config["tests"] = tests_ref
+
+    write_yaml(output_path, config)
+    return {
+        "config": config,
+        "command": dataforge_config.get("command") or ["npx", "--yes", "promptfoo@latest"],
+    }
+
+
+def run_promptfoo_eval(
+    command: list[str],
+    config_path: Path,
+    results_path: Path,
+    *,
+    cwd: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, Any]:
+    command_runner = runner or subprocess.run
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    full_command = [*command, "eval", "-c", str(config_path), "--output", str(results_path), "--no-cache"]
+    try:
+        completed = command_runner(
+            full_command,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise PromptfooExecutionError(f"Promptfoo command not found: {command[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise PromptfooExecutionError(
+            f"Promptfoo eval failed with exit code {exc.returncode}: {exc.stderr.strip() or exc.stdout.strip()}"
+        ) from exc
+
+    result_payload: Any = {}
+    if results_path.exists():
+        with results_path.open("r", encoding="utf-8") as handle:
+            try:
+                result_payload = json.load(handle)
+            except json.JSONDecodeError:
+                result_payload = {}
+
+    summary = {
+        "status": "ok",
+        "command": full_command,
+        "results_path": str(results_path),
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+    if isinstance(result_payload, dict):
+        for key in ("results", "summary", "stats"):
+            if key in result_payload:
+                summary[key] = result_payload[key]
+    return summary
+
+
 def write_eval_reports(
     summary_path: Path,
     confusion_path: Path,
     metrics: dict[str, Any],
+    *,
+    promptfoo_summary: dict[str, Any] | None = None,
 ) -> None:
     summary_lines = [
         "# Eval Summary",
@@ -111,6 +211,25 @@ def write_eval_reports(
         summary_lines.append(
             f"- {label}: precision={values['precision']:.4f}, recall={values['recall']:.4f}, f1={values['f1']:.4f}"
         )
+
+    if promptfoo_summary is not None:
+        summary_lines.extend(
+            [
+                "",
+                "## Promptfoo",
+                "",
+                f"- Status: {promptfoo_summary.get('status', 'unknown')}",
+                f"- Results path: {promptfoo_summary.get('results_path', '')}",
+            ]
+        )
+        if promptfoo_summary.get("stdout"):
+            summary_lines.append(f"- Stdout: {promptfoo_summary['stdout']}")
+        if promptfoo_summary.get("stderr"):
+            summary_lines.append(f"- Stderr: {promptfoo_summary['stderr']}")
+        if "summary" in promptfoo_summary:
+            summary_lines.append(f"- Promptfoo summary: {promptfoo_summary['summary']}")
+        if "stats" in promptfoo_summary:
+            summary_lines.append(f"- Promptfoo stats: {promptfoo_summary['stats']}")
 
     confusion_lines = ["# Confusion Analysis", "", "## Matrix"]
     for expected, predicted_counts in metrics["confusion_matrix"].items():

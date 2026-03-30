@@ -1,5 +1,9 @@
-description: report-intent-distill promptfoo placeholder
+description: report-intent-distill promptfoo eval
+dataforge:
+  command:
+    - promptfoo
 providers:
-  - id: mock
+  - echo
 prompts:
-  - file://tasks/report-intent-distill/configs/teacher_prompt.txt
+  - "{{predicted_json}}"
+tests: file://__DATAFORGE_EVAL_FOR_PROMPTFOO__

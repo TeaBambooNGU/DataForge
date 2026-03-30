@@ -1,6 +1,6 @@
 # 工程架构梳理
 
-- 当前梳理时间: 2026-03-30 16:30:59
+- 当前梳理时间: 2026-03-30 19:11:05
 
 ## 项目概览
 - 项目定位: DataForge 是一个面向离线蒸馏数据生产的 MVP 脚手架，当前围绕 `report-intent-distill` 任务提供从样本生成、教师标注、筛选导出、人工复核到 gold 集构建和评测的全流程能力。
@@ -17,11 +17,13 @@
   6. 支持在浏览器里直接编辑任务配置文件，并回写 `task.yaml`、`labels.yaml`、`scenario_matrix.yaml`、`generator_prompt.txt`、`teacher_prompt.txt`。
   7. 支持在浏览器里删除历史 run，后端会同步维护 `runs/index.json` 与 `latest.json`。
   8. 支持对关键运行产物进行结构化诊断浏览，而不是直接展示原始 JSONL 文本。
+  9. 支持在 `eval` 阶段生成 Promptfoo tests、渲染运行时 Promptfoo 配置、调用本机 `promptfoo` CLI 并回收结果摘要。
+  10. 支持对同一样本的多轮人工复核按 `sample_id` 聚合，并以最后一次有效人工结论构建 gold 集。
 - 关键输出:
   1. `tasks/<task>/runs/<run_id>/raw/*.jsonl`：候选样本与教师标注结果。
   2. `tasks/<task>/runs/<run_id>/processed/*`：过滤后的训练集、带 `rejection_reason` 的拒绝集、复核导出、复核结果。
   3. `tasks/<task>/runs/<run_id>/gold/*`：gold 集与 hard cases。
-  4. `tasks/<task>/runs/<run_id>/exports/*` 与 `reports/*`：评测导出、预测结果、评测总结、stage manifest。
+  4. `tasks/<task>/runs/<run_id>/exports/*` 与 `reports/*`：评测导出、预测结果、Promptfoo 运行时配置、Promptfoo 原始结果、评测总结、stage manifest。
   5. `frontend/*`：本地工作台静态资源。
 
 ## 工程逻辑梳理
@@ -47,8 +49,8 @@
   5. [src/dataforge/core/io.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/io.py)：YAML/JSON/JSONL/Text 读写、目录保障、manifest 持久化。
   6. [src/dataforge/core/schemas.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/schemas.py)：样本 schema 校验，覆盖 candidate/classified/reviewed/gold 四个 stage。
   7. [src/dataforge/core/filters.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/filters.py) 与 [src/dataforge/core/dedupe.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/dedupe.py)：样本去重、规则过滤、review pool 划分。
-  8. [src/dataforge/core/review.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/review.py)：复核记录模板、复核校验、复核统计、review 应用。
-  9. [src/dataforge/core/eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/eval_runner.py)：评测指标计算、promptfoo 导出、summary/confusion 报告生成。
+  8. [src/dataforge/core/review.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/review.py)：复核记录模板、复核校验、复核统计、多轮 review 聚合与 review 应用。
+  9. [src/dataforge/core/eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/eval_runner.py)：评测指标计算、Promptfoo tests 导出、运行时 Promptfoo 配置生成、Promptfoo CLI 执行与 summary/confusion 报告生成。
   10. [src/dataforge/providers/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/providers)：provider 抽象与具体模型接入。
   11. [src/dataforge/pipelines/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines)：按 stage 划分的流水线执行单元。
   12. [tasks/report-intent-distill/configs/](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/configs)：任务级静态配置、prompt、labels、scenario matrix。
@@ -62,12 +64,15 @@
   7. `frontend` 的“任务定义”页已拆成默认只读查看态和独立编辑态，避免只读摘要与编辑表单在同一页面同时出现。
   8. `frontend` 在产物展示上默认只展示实际存在的 artifact，并隐藏 `*_manifest`，结构化浏览优先于原始 JSONL 转储。
   9. `frontend/app.js` 中 `ARTIFACT_EXPLANATIONS` 与 `renderArtifactExplanation()` 为每个 artifact 提供“用途/阶段/阅读提示”说明，降低直接查看中间产物的理解成本。
+  10. `core/review.py` 中 `group_review_records()` 与 `merge_review_records()` 负责将同一样本的多轮复核记录按输入顺序聚合，再由 `build_gold` 只消费每个 `sample_id` 的最终状态，避免重复产出 gold 样本。
+  11. `core/eval_runner.py` 中 `build_promptfoo_runtime_config()` 会把任务侧 `promptfoo.yaml` 渲染为 run 级配置文件，`run_promptfoo_eval()` 则调用本机 `promptfoo eval` 并回收结果摘要。
 - 主要依赖:
   1. `fastapi`：提供本地工作台 HTTP API。
   2. `uvicorn`：提供本地 ASGI 服务启动。
   3. `pytest`：测试与 smoke 验证。
   4. `pyyaml`：任务与场景配置解析。
-  5. Python 标准库 `argparse`、`json`、`pathlib`、`datetime` 等：支撑 CLI、配置、文件组织与本地服务启动。
+  5. 本机 `promptfoo` CLI：执行 Promptfoo 离线评测并输出 JSON 结果。
+  6. Python 标准库 `argparse`、`json`、`pathlib`、`datetime`、`subprocess` 等：支撑 CLI、配置、文件组织、本地服务启动与外部评测命令调用。
 
 ### 依赖关系
 - 外部依赖:
@@ -75,14 +80,16 @@
   2. `openai_compatible` 通过标准 Chat Completions HTTP 接口对接 OpenAI 风格 relay。
   3. `anthropic_compatible` 通过 Messages HTTP 接口对接 Anthropic 风格 relay。
   4. `minimax` 复用 `anthropic_compatible` 实现，仅替换默认环境变量为 `MINIMAX_BASE_URL` 与 `MINIMAX_API_KEY`。
+  5. `promptfoo` 通过本机 CLI 执行离线评测；当前任务默认依赖用户环境中可直接调用的 `promptfoo` 命令。
 - 内部依赖:
   1. CLI 依赖 `core.env`、`core.registry` 和所有 `pipelines`。
   2. Web API 依赖 `core.env`、`core.io`、`core.registry`、`core.review` 和各 pipeline。
   3. 前端只通过 `fetch()` 调用本地 HTTP API，不直接触达文件系统。
   4. `pipelines.generate/classify/eval` 依赖 provider registry 获取具体 provider。
   5. `pipelines.filter_export` 依赖 `dedupe`、`filters`、`io`、`registry`，其中 `filters.reject_sample()` 负责为拒绝样本写入 `rejection_reason`。
-  6. `pipelines.review_export/validate_review/build_gold` 依赖 `review` 模块处理人工复核闭环。
+  6. `pipelines.review_export/validate_review/build_gold` 依赖 `review` 模块处理人工复核闭环，其中 `build_gold` 基于多轮 review 聚合后的最终状态构建 gold。
   7. `TaskRun.path_for()` 是运行期文件寻址的中心入口，CLI stage 与 Web API 均通过 artifact key 间接访问具体路径。
+  8. `pipelines.eval` 依赖 `core.eval_runner` 生成 Promptfoo tests、运行时配置和 CLI 调用摘要，同时复用 provider registry 产出 DataForge 自己的预测结果。
 
 ### 数据流/控制流
 - 数据来源:
@@ -97,8 +104,8 @@
   3. `filter-export`：读取教师标注结果，基于 `user_text`、`parse_ok`、允许标签、长度限制和任务规则过滤；先按 `(user_text.lower(), has_visible_report, teacher_label)` 去重，再拆分出训练集、带 `rejection_reason` 的拒绝集、复核池与空的 promptfoo eval 占位文件。
   4. `review-export`：把 review pool 组装成待人工复核模板 `processed/review_candidates.jsonl`。
   5. `validate-review`：校验 `processed/review_results.jsonl`，输出 `reports/review_validation.md`。
-  6. `build-gold`：将人工复核结果回写到教师标注样本，冻结为 `gold/gold_eval.jsonl`，并抽取 hard cases。
-  7. `eval`：对 gold 集重新做预测，输出 `exports/eval_predictions.jsonl`、`exports/eval_for_promptfoo.jsonl`、`reports/eval_summary.md`、`reports/confusion_analysis.md`。
+  6. `build-gold`：先按 `sample_id` 聚合同一样本的多轮人工复核记录，再将最终有效结论回写到教师标注样本，冻结为 `gold/gold_eval.jsonl`，并抽取 hard cases。
+  7. `eval`：对 gold 集重新做预测，输出 `exports/eval_predictions.jsonl`、`exports/eval_for_promptfoo.jsonl`、`reports/promptfoo/config.yaml`、`reports/promptfoo/results.json`、`reports/eval_summary.md`、`reports/confusion_analysis.md`。
 - Web 控制流:
   1. 前端初始化后先调用 `GET /api/tasks`，加载 task 列表及最新 run 摘要。
   2. 选择 task 后，前端继续调用 `GET /api/tasks/{task_name}/spec`、`GET /api/tasks/{task_name}/config-files` 和 `GET /api/tasks/{task_name}/runs`，分别加载只读任务定义、可编辑配置草稿和 run 列表。
@@ -116,13 +123,16 @@
   3. `RUN_STATUS_ORDER` 保证状态只能向前推进，避免晚执行的低优先级 stage 把总体状态回退。
   4. Web 端 artifact 接口对 `.jsonl` 返回限制条数的结构化内容，对 `.json` 返回对象，对文本文件返回截断文本，避免页面一次性加载过大文件。
   5. run 删除不依赖数据库事务；一致性由 `_delete_run()` 串行完成目录删除、索引重写和 latest 指针同步，保证页面刷新后不会继续引用已删除 run。
+  6. `build-gold` 对每个 `sample_id` 只产出一条 gold 样本，最终 `review_status` 与 `human_label` 以该样本最后一次有效人工结论为准。
+  7. `eval` 会先导出 Promptfoo tests，再根据任务侧 `promptfoo.yaml` 渲染 run 级配置，并调用本机 `promptfoo eval --output <results.json> --no-cache`；若 CLI 缺失或执行失败，会直接抛出错误终止阶段。
 
 ### 关键配置
 - 配置文件:
   1. [pyproject.toml](/Users/teabamboo/Documents/AIplusLLM/DataForge/pyproject.toml)：包定义、CLI/Web 脚本入口、依赖、pytest 配置。
   2. [README.md](/Users/teabamboo/Documents/AIplusLLM/DataForge/README.md)：操作命令、run versioning 说明、provider 配置示例。
   3. [tasks/report-intent-distill/configs/task.yaml](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/configs/task.yaml)：任务主题、runtime、paths、rules、exports。
-  4. [tasks/report-intent-distill/README.md](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/README.md)：任务级运行说明与 provider 切换示例。
+  4. [tasks/report-intent-distill/configs/promptfoo.yaml](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/configs/promptfoo.yaml)：Promptfoo 模板配置，定义 providers、prompts 与 run 时注入的 tests 占位符。
+  5. [tasks/report-intent-distill/README.md](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/README.md)：任务级运行说明与 provider 切换示例。
 - 关键参数:
   1. `runtime.<stage>.provider`：决定 stage 选择的 provider 实现。
   2. `model`、`temperature`、`max_tokens`、`max_retries`、`retry_backoff_seconds`：控制模型调用与重试。
@@ -132,17 +142,20 @@
   6. `scenario.generation_count`：控制该场景预计生成多少样本；若留空，则退化为 `templates` 条数。
   7. `rejection_reason`：`filter-export` 输出给拒绝样本的诊断字段，用于前端汇总、筛选和问题定位。
   8. Web 启动参数 `--host`、`--port`、`--project-root`：控制本地工作台绑定地址与项目根目录。
+  9. `promptfoo.yaml` 中 `dataforge.command`：定义 DataForge 在运行时调用 Promptfoo CLI 的命令前缀；当前任务默认使用本机 `promptfoo`。
+  10. `promptfoo.yaml` 中 `tests: file://__DATAFORGE_EVAL_FOR_PROMPTFOO__`：作为占位符，在 `eval` 阶段被渲染为当前 run 对应的 `exports/eval_for_promptfoo.jsonl` 绝对路径。
 - 运行环境约束:
   1. 需要 Python 3.9+。
   2. 若使用真实 provider，必须提供对应 API key 与 base URL 环境变量。
-  3. 当前项目未接入数据库、消息队列或远程存储，所有产物均写入本地文件系统。
-  4. 前端不经过构建流程，依赖浏览器直接加载 `frontend/index.html`、`frontend/app.js`、`frontend/styles.css`。
+  3. `eval` 阶段若要执行 Promptfoo，要求本机环境中可直接调用 `promptfoo` 命令。
+  4. 当前项目未接入数据库、消息队列或远程存储，所有产物均写入本地文件系统。
+  5. 前端不经过构建流程，依赖浏览器直接加载 `frontend/index.html`、`frontend/app.js`、`frontend/styles.css`。
 
 ### 运行流程
 - CLI 工作流:
   1. 通过 `uv run dataforge generate --task report-intent-distill` 或 `run-all` 创建新的 `run_id`。
   2. 在自动流程结束后，人工或外部工具填充 `processed/review_results.jsonl`。
-  3. 继续运行 `validate-review`、`build-gold`、`eval` 完成闭环。
+  3. 继续运行 `validate-review`、`build-gold`、`eval` 完成闭环；其中 `eval` 会额外在当前 run 下写入 Promptfoo 配置与原始结果。
 - Web 工作流:
   1. 通过 `uv run dataforge-web --host 127.0.0.1 --port 8013` 启动本地工作台。
   2. 浏览器打开首页后，左侧选择 task / run，顶部通过页签在“运行控制”“任务定义”“运行产物”“人工复核”之间切换。
@@ -162,12 +175,22 @@
   4. schema 与 review 校验均采用 fail-fast 策略，不做自动修复。
   5. 删除不存在的 run 时，`DELETE /api/tasks/{task_name}/runs/{run_id}` 会返回 404，避免前端误以为删除成功。
   6. API 层将 `FileNotFoundError`、`ValueError` 映射为 `400/404`，前端通过消息条显示错误。
+  7. `eval` 若找不到本机 `promptfoo` 命令，或 Promptfoo 运行失败，会在 `run_promptfoo_eval()` 中直接抛出异常并终止当前阶段。
 - 观测与日志:
   1. 当前没有统一日志系统或链路追踪。
-  2. 可观测性主要依赖 `reports/manifests/*.json`、`eval_summary.md`、`confusion_analysis.md`、`review_validation.md`、`runs/index.json` 与前端消息条。
-  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程；本地工作台当前主要依赖 `node --check frontend/app.js` 与 `create_app()` 路由存在性做最小验证。
+  2. 可观测性主要依赖 `reports/manifests/*.json`、`reports/promptfoo/results.json`、`eval_summary.md`、`confusion_analysis.md`、`review_validation.md`、`runs/index.json` 与前端消息条。
+  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程，`tests/test_eval_runner.py` 覆盖 Promptfoo tests 导出、运行时配置渲染与 CLI 调用抽象；本地工作台当前主要依赖 `node --check frontend/app.js` 与 `create_app()` 路由存在性做最小验证。
 
 ## 改动概要/变更记录
+
+### 2026-03-30 19:11:05
+- 本次新增/更新要点:
+  1. 根据最新代码补齐多轮 review merge 规则，更新 [src/dataforge/core/review.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/review.py) 中 `group_review_records()`、`merge_review_records()` 与 [src/dataforge/pipelines/build_gold.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines/build_gold.py) 的 gold 构建逻辑说明。
+  2. 更新 `eval` 阶段说明，明确 [src/dataforge/core/eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/eval_runner.py) 现在会导出 Promptfoo tests、渲染 run 级 Promptfoo 配置、调用本机 `promptfoo` CLI 并回收 JSON 结果。
+  3. 更新关键输出与运行环境约束，补充 `reports/promptfoo/config.yaml`、`reports/promptfoo/results.json` 和本机 `promptfoo` 依赖。
+  4. 更新测试说明，补充 [tests/test_eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/tests/test_eval_runner.py) 对 Promptfoo 集成的最小覆盖。
+- 变更动机/需求来源: 用户要求依据最新代码再次更新 `docs/architecture.md`，补齐多轮 review 合并与 Promptfoo 真实执行链路等最近迭代后的真实行为。
+- 当前更新时间: 2026-03-30 19:11:05
 
 ### 2026-03-30 16:30:59
 - 本次新增/更新要点:
