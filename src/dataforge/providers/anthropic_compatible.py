@@ -84,6 +84,20 @@ def _parse_json_payload(content: str) -> Any:
         raise AnthropicCompatibleError(f"Provider returned non-JSON content: {content}") from exc
 
 
+def _normalize_generator_items(payload: dict[str, Any]) -> list[Any]:
+    items = payload.get("items")
+    if isinstance(items, list):
+        return items
+
+    user_text = payload.get("user_text")
+    if isinstance(user_text, list):
+        return user_text
+    if isinstance(user_text, str) and user_text.strip():
+        return [user_text]
+
+    raise AnthropicCompatibleError(f"Generator response missing items list: {payload}")
+
+
 def _split_system_messages(messages: list[dict[str, str]]) -> tuple[str | None, list[dict[str, str]]]:
     system_parts: list[str] = []
     normalized_messages: list[dict[str, str]] = []
@@ -282,10 +296,7 @@ class AnthropicCompatibleGeneratorProvider(GeneratorProvider):
         for scenario in scenarios:
             content = self.client.complete(runtime, _build_generator_messages(task, scenario))
             payload = _parse_json_payload(content)
-            items = payload.get("items")
-            if not isinstance(items, list):
-                raise AnthropicCompatibleError(f"Generator response missing items list: {payload}")
-            for item in items:
+            for item in _normalize_generator_items(payload):
                 if isinstance(item, str):
                     user_text = item.strip()
                 elif isinstance(item, dict):

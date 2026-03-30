@@ -115,11 +115,17 @@ def write_review_validation_report(path: Path, summary: dict[str, Any]) -> None:
 
 def apply_review_record(sample: dict[str, Any], review_record: dict[str, Any]) -> dict[str, Any]:
     decision = review_record["review_decision"]
-    human_label = None
+    review_status = sample.get("annotation", {}).get("review_status", "unreviewed")
+    human_label = sample.get("annotation", {}).get("human_label")
     if decision == "accepted":
+        review_status = "accepted"
         human_label = sample["annotation"]["teacher_label"]
     elif decision == "corrected":
+        review_status = "corrected"
         human_label = review_record["reviewer_label"]
+    elif decision == "rejected":
+        review_status = "rejected"
+        human_label = None
 
     review_history = list(sample.get("annotation", {}).get("review_history", []))
     review_history.append(
@@ -134,11 +140,25 @@ def apply_review_record(sample: dict[str, Any], review_record: dict[str, Any]) -
 
     return {
         **sample,
-        "stage": "reviewed",
+        "stage": "reviewed" if review_status != "unreviewed" else sample.get("stage", "classified"),
         "annotation": {
             **sample["annotation"],
-            "review_status": decision,
+            "review_status": review_status,
             "human_label": human_label,
             "review_history": review_history,
         },
     }
+
+
+def merge_review_records(sample: dict[str, Any], review_records: list[dict[str, Any]]) -> dict[str, Any]:
+    merged = sample
+    for review_record in review_records:
+        merged = apply_review_record(merged, review_record)
+    return merged
+
+
+def group_review_records(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        grouped.setdefault(record["sample_id"], []).append(record)
+    return grouped

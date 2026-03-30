@@ -4,6 +4,8 @@ from dataforge.core.review import (
     ReviewValidationError,
     apply_review_record,
     build_review_record,
+    group_review_records,
+    merge_review_records,
     summarize_review_records,
     validate_review_record,
 )
@@ -89,3 +91,80 @@ def test_summarize_review_records_counts_decisions() -> None:
     assert summary["pending"] == 1
     assert summary["completion_rate"] == 0.75
     assert summary["reviewed_by"] == {"alice": 2, "bob": 1}
+
+
+def test_merge_review_records_uses_last_effective_decision_and_keeps_history() -> None:
+    sample = {
+        "id": "sample-1",
+        "task_name": "report-intent-distill",
+        "theme": "report_intent_classification",
+        "stage": "classified",
+        "context": {},
+        "input": {"user_text": "帮我改正式一点"},
+        "annotation": {
+            "teacher_label": "rewrite_report",
+            "teacher_raw_output": '{"action":"rewrite_report"}',
+            "parse_ok": True,
+            "error_code": None,
+            "human_label": None,
+            "review_status": "unreviewed",
+            "final_label": None,
+        },
+        "metadata": {"source": "synthetic", "difficulty": "medium", "tags": []},
+    }
+    records = [
+        {
+            "sample_id": "sample-1",
+            "task_name": "report-intent-distill",
+            "user_text": "帮我改正式一点",
+            "teacher_label": "rewrite_report",
+            "review_decision": "accepted",
+            "reviewer_label": "rewrite_report",
+            "review_comment": "",
+            "reviewed_by": "reviewer-a",
+            "reviewed_at": "2026-03-27T00:00:00+00:00",
+        },
+        {
+            "sample_id": "sample-1",
+            "task_name": "report-intent-distill",
+            "user_text": "帮我改正式一点",
+            "teacher_label": "rewrite_report",
+            "review_decision": "pending",
+            "reviewer_label": None,
+            "review_comment": "",
+            "reviewed_by": None,
+            "reviewed_at": "2026-03-27T00:01:00+00:00",
+        },
+        {
+            "sample_id": "sample-1",
+            "task_name": "report-intent-distill",
+            "user_text": "帮我改正式一点",
+            "teacher_label": "rewrite_report",
+            "review_decision": "corrected",
+            "reviewer_label": "chat",
+            "review_comment": "改成 chat",
+            "reviewed_by": "reviewer-b",
+            "reviewed_at": "2026-03-27T00:02:00+00:00",
+        },
+    ]
+
+    merged = merge_review_records(sample, records)
+
+    assert merged["stage"] == "reviewed"
+    assert merged["annotation"]["review_status"] == "corrected"
+    assert merged["annotation"]["human_label"] == "chat"
+    assert len(merged["annotation"]["review_history"]) == 3
+    assert merged["annotation"]["review_history"][-1]["decision"] == "corrected"
+
+
+def test_group_review_records_preserves_input_order_per_sample() -> None:
+    records = [
+        {"sample_id": "sample-2", "review_decision": "accepted"},
+        {"sample_id": "sample-1", "review_decision": "accepted"},
+        {"sample_id": "sample-2", "review_decision": "corrected"},
+    ]
+
+    grouped = group_review_records(records)
+
+    assert list(grouped) == ["sample-2", "sample-1"]
+    assert [record["review_decision"] for record in grouped["sample-2"]] == ["accepted", "corrected"]

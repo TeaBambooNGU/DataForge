@@ -1,1 +1,0 @@
-{"id": "report-intent-distill-000007", "user_text": "这版先留着，再按今天的新消息重跑一个版本", "expected_label": "regenerate_report", "predicted_label": "regenerate_report", "parse_ok": true, "raw_output": "{\"action\": \"regenerate_report\"}", "error_code": null, "has_visible_report": true, "difficulty": "hard", "tags": ["ambiguous", "multi_intent", "latest_info_request", "has_reference"]}

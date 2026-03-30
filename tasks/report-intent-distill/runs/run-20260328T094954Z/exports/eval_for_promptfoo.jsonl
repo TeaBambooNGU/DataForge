@@ -1,2 +1,0 @@
-{"id": "report-intent-distill-000007", "input": "这版 AI 基建的留着备用，我看到今天又有几条新的政策消息出来，帮我再重新生成一版，把最新的动态也加进去", "expected": "regenerate_report"}
-{"id": "report-intent-distill-000008", "input": "帮我把这些内容整理一下，改得更正式一点，逻辑层次要清晰", "expected": "chat"}

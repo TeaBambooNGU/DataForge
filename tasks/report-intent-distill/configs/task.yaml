@@ -7,36 +7,36 @@ runtime:
   generator:
     provider: minimax
     model: MiniMax-M2.7
-    temperature: 0.0
+    temperature: 0
     seed: 42
     batch_size: 32
     retry_policy: none
     prompt_version: v1
     max_tokens: 1024
     max_retries: 2
-    retry_backoff_seconds: 1.0
-    max_retry_backoff_seconds: 8.0
+    retry_backoff_seconds: 1
+    max_retry_backoff_seconds: 8
   teacher:
     provider: minimax
     model: MiniMax-M2.7
-    temperature: 0.0
+    temperature: 0
     seed: 42
     batch_size: 64
     retry_policy: strict_json
     prompt_version: v1
     max_tokens: 1024
     max_retries: 2
-    retry_backoff_seconds: 1.0
-    max_retry_backoff_seconds: 8.0
+    retry_backoff_seconds: 1
+    max_retry_backoff_seconds: 8
   eval:
     provider: minimax
     model: MiniMax-M2.7
-    temperature: 0.0
+    temperature: 0
     prompt_version: v1
     max_tokens: 1024
     max_retries: 2
-    retry_backoff_seconds: 1.0
-    max_retry_backoff_seconds: 8.0
+    retry_backoff_seconds: 1
+    max_retry_backoff_seconds: 8
 paths:
   labels: tasks/report-intent-distill/configs/labels.yaml
   scenario_matrix: tasks/report-intent-distill/configs/scenario_matrix.yaml

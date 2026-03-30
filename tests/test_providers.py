@@ -267,6 +267,39 @@ def test_anthropic_compatible_generator_provider_accepts_fenced_json_and_string_
     assert samples[0]["input"]["user_text"] == "请帮我解释一下这个指标"
 
 
+def test_anthropic_compatible_generator_provider_accepts_user_text_list_payload() -> None:
+    task = load_task_config(Path("."), "report-intent-distill")
+    task.config["runtime"]["generator"] = {
+        "provider": "anthropic_compatible",
+        "model": "anthropic-relay-model",
+        "base_url": "https://relay.example.com/v1",
+        "api_key": "test-key",
+        "max_tokens": 256,
+    }
+    provider = AnthropicCompatibleGeneratorProvider(
+        client=_FakeClient(
+            [
+                '{"user_text":["这份新能源日报再改改，措辞正式一些，当作给领导汇报用","内容框架不变，把语气调得更专业正式点"]}'
+            ]
+        )
+    )
+    samples = provider.generate_samples(
+        task,
+        [
+            {
+                "intent": "rewrite_report",
+                "difficulty": "medium",
+                "tags": ["tone_adjustment"],
+                "context": {"has_visible_report": True},
+                "templates": ["帮我把日报改正式一些"],
+            }
+        ],
+    )
+    assert len(samples) == 2
+    assert samples[0]["input"]["user_text"] == "这份新能源日报再改改，措辞正式一些，当作给领导汇报用"
+    assert samples[1]["input"]["user_text"] == "内容框架不变，把语气调得更专业正式点"
+
+
 def test_anthropic_compatible_teacher_provider_parses_action() -> None:
     task = load_task_config(Path("."), "report-intent-distill")
     task.config["runtime"]["teacher"] = {

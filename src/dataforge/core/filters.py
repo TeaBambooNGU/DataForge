@@ -10,6 +10,12 @@ class FilterResult:
     review_pool: list[dict]
 
 
+def reject_sample(sample: dict, reason: str) -> dict:
+    rejected = dict(sample)
+    rejected["rejection_reason"] = reason
+    return rejected
+
+
 def should_send_to_review(sample: dict) -> bool:
     tags = set(sample.get("metadata", {}).get("tags", []))
     difficulty = sample.get("metadata", {}).get("difficulty")
@@ -34,21 +40,24 @@ def filter_classified_samples(
         context = sample.get("context", {})
 
         if not user_text:
-            rejected.append(sample)
+            rejected.append(reject_sample(sample, "empty_user_text"))
             continue
         if not parse_ok:
-            rejected.append(sample)
+            rejected.append(reject_sample(sample, "parse_failed"))
             continue
         if label not in allowed_labels:
-            rejected.append(sample)
+            rejected.append(reject_sample(sample, "label_not_allowed"))
             continue
-        if len(user_text) < 2 or len(user_text) > 500:
-            rejected.append(sample)
+        if len(user_text) < 2:
+            rejected.append(reject_sample(sample, "text_too_short"))
+            continue
+        if len(user_text) > 500:
+            rejected.append(reject_sample(sample, "text_too_long"))
             continue
         if task_rules.get("disallow_rewrite_without_visible_report") and (
             not context.get("has_visible_report") and label == "rewrite_report"
         ):
-            rejected.append(sample)
+            rejected.append(reject_sample(sample, "rewrite_without_visible_report"))
             continue
 
         kept.append(sample)

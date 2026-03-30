@@ -4,7 +4,7 @@ from pathlib import Path
 
 from dataforge.core.io import read_jsonl, write_jsonl, write_run_manifest
 from dataforge.core.registry import TaskRun
-from dataforge.core.review import apply_review_record, validate_review_records
+from dataforge.core.review import group_review_records, merge_review_records, validate_review_records
 from dataforge.core.schemas import validate_samples
 
 
@@ -16,13 +16,14 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
     sample_map = {sample["id"]: sample for sample in classified_samples}
     gold_samples = []
     hard_cases = []
+    grouped_reviews = group_review_records(review_records)
 
-    for record in review_records:
-        sample = sample_map.get(record["sample_id"])
+    for sample_id, records in grouped_reviews.items():
+        sample = sample_map.get(sample_id)
         if sample is None:
-            raise ValueError(f"Review sample_id not found in teacher_labeled set: {record['sample_id']}")
+            raise ValueError(f"Review sample_id not found in teacher_labeled set: {sample_id}")
 
-        reviewed_sample = apply_review_record(sample, record)
+        reviewed_sample = merge_review_records(sample, records)
         review_status = reviewed_sample["annotation"]["review_status"]
         if review_status not in {"accepted", "corrected"}:
             continue

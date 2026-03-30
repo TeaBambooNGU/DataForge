@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DataForge Workbench</title>
+    <meta
+      name="description"
+      content="DataForge 本地工作台，直接在浏览器里管理 task、run、pipeline、产物和人工复核。"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="brand-lockup">
+            <span class="brand-mark">DF</span>
+            <div>
+              <strong>DataForge</strong>
+              <span>Local Workbench</span>
+            </div>
+          </div>
+          <button class="ghost-button" id="refreshAllButton" type="button">刷新</button>
+        </div>
+
+        <section class="sidebar-section">
+          <div class="section-title-row">
+            <h2>Tasks</h2>
+            <span id="taskCount" class="pill">0</span>
+          </div>
+          <div class="task-list" id="taskList"></div>
+        </section>
+
+        <section class="sidebar-section">
+          <div class="section-title-row">
+            <h2>Runs</h2>
+            <span id="runCount" class="pill">0</span>
+          </div>
+          <div class="run-list" id="runList"></div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-head">
+          <div class="workspace-hero">
+            <div class="workspace-intro">
+              <p class="eyebrow">Operational Surface</p>
+              <h1 id="workspaceTitle">加载中</h1>
+              <p class="workspace-subtitle" id="workspaceSubtitle">
+                正在连接本地 DataForge 工作台。
+              </p>
+              <div class="workspace-context" id="workspaceContext"></div>
+            </div>
+            <aside class="mission-panel">
+              <p class="mission-kicker">Recommended Next</p>
+              <h2 id="recommendedActionTitle">正在准备工作台</h2>
+              <p id="recommendedActionBody">系统会根据当前 task / run 状态推荐下一步动作。</p>
+              <div class="mission-meta" id="recommendedActionMeta"></div>
+            </aside>
+          </div>
+          <div class="status-strip">
+            <div class="status-chip">
+              <span>Task</span>
+              <strong id="taskNameValue">-</strong>
+            </div>
+            <div class="status-chip">
+              <span>Run</span>
+              <strong id="runIdValue">-</strong>
+            </div>
+            <div class="status-chip">
+              <span>Status</span>
+              <strong id="runStatusValue">-</strong>
+            </div>
+          </div>
+        </header>
+
+        <nav class="workspace-tabs" aria-label="Workbench Tabs">
+          <button class="workspace-tab is-active" data-workbench-tab="run-control" type="button">运行控制</button>
+          <button class="workspace-tab" data-workbench-tab="task-spec" type="button">任务定义</button>
+          <button class="workspace-tab" data-workbench-tab="artifacts" type="button">运行产物</button>
+          <button class="workspace-tab" data-workbench-tab="review" type="button">人工复核</button>
+        </nav>
+
+        <div class="tab-panels">
+          <section class="panel tab-panel" data-workbench-panel="run-control">
+            <div class="run-control-layout">
+              <article class="run-control-block run-control-block-primary">
+                <div class="panel-heading">
+                  <div>
+                    <p class="panel-kicker">Pipeline Control</p>
+                    <h2>阶段执行驾驶舱</h2>
+                  </div>
+                  <label class="inline-field">
+                    <span>Reviewer</span>
+                    <input id="reviewerInput" type="text" placeholder="可选，保存 review 时写入" />
+                  </label>
+                </div>
+
+                <div class="pipeline-overview" id="pipelineOverview">
+                  <div class="empty-state">选择 task / run 后显示阶段进度与推荐顺序。</div>
+                </div>
+
+                <div class="command-grid" id="commandGrid">
+                  <button class="command-button" data-command="generate" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">01</span>
+                      <span class="command-state">new run</span>
+                    </div>
+                    <strong>generate</strong>
+                    <span>新建 run，并生成带有 label_hint 的候选样本</span>
+                  </button>
+                  <button class="command-button" data-command="classify" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">02</span>
+                      <span class="command-state">labeling</span>
+                    </div>
+                    <strong>classify</strong>
+                    <span>教师模型重新判定正式标签</span>
+                  </button>
+                  <button class="command-button" data-command="filter-export" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">03</span>
+                      <span class="command-state">filtering</span>
+                    </div>
+                    <strong>filter-export</strong>
+                    <span>过滤、去重、拆分训练集</span>
+                  </button>
+                  <button class="command-button" data-command="review-export" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">04</span>
+                      <span class="command-state">handoff</span>
+                    </div>
+                    <strong>review-export</strong>
+                    <span>导出人工复核模板</span>
+                  </button>
+                  <button class="command-button" data-command="validate-review" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">05</span>
+                      <span class="command-state">gate</span>
+                    </div>
+                    <strong>validate-review</strong>
+                    <span>校验人工复核结果</span>
+                  </button>
+                  <button class="command-button" data-command="build-gold" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">06</span>
+                      <span class="command-state">freeze</span>
+                    </div>
+                    <strong>build-gold</strong>
+                    <span>冻结 gold 与 hard cases</span>
+                  </button>
+                  <button class="command-button" data-command="eval" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">07</span>
+                      <span class="command-state">score</span>
+                    </div>
+                    <strong>eval</strong>
+                    <span>输出评测结果与报告</span>
+                  </button>
+                  <button class="command-button command-button-emphasis" data-command="run-all" type="button">
+                    <div class="command-button-top">
+                      <span class="command-step">Batch</span>
+                      <span class="command-state">first pass</span>
+                    </div>
+                    <strong>run-all</strong>
+                    <span>串行跑前四个阶段</span>
+                  </button>
+                </div>
+              </article>
+
+              <article class="run-control-block run-control-block-secondary">
+                <div class="panel-heading">
+                  <div>
+                    <p class="panel-kicker">Run Summary</p>
+                    <h2>当前运行状态</h2>
+                  </div>
+                  <div id="messageBar" class="message-bar">准备就绪</div>
+                </div>
+
+                <div class="summary-grid">
+                  <article class="metric-card">
+                    <span>Last Stage</span>
+                    <strong id="lastStageValue">-</strong>
+                  </article>
+                  <article class="metric-card">
+                    <span>Created</span>
+                    <strong id="createdAtValue">-</strong>
+                  </article>
+                  <article class="metric-card">
+                    <span>Updated</span>
+                    <strong id="updatedAtValue">-</strong>
+                  </article>
+                  <article class="metric-card">
+                    <span>Labels</span>
+                    <strong id="labelSummaryValue">-</strong>
+                  </article>
+                </div>
+
+                <div class="run-insight-grid">
+                  <article class="run-insight-card">
+                    <p class="panel-kicker">Stage Timeline</p>
+                    <div class="stage-timeline" id="stageTimeline">
+                      <div class="empty-state">选择 run 后显示阶段完成顺序与统计。</div>
+                    </div>
+                  </article>
+                  <article class="run-insight-card">
+                    <p class="panel-kicker">Operator Notes</p>
+                    <div class="run-checklist" id="runChecklist">
+                      <div class="empty-state">系统会根据当前状态提示建议动作、注意事项和产物阅读入口。</div>
+                    </div>
+                  </article>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel tab-panel task-spec-panel" data-workbench-panel="task-spec" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Task Spec</p>
+                <h2>任务定义</h2>
+              </div>
+              <div class="task-spec-actions">
+                <div class="task-spec-switch" id="promptViewSwitch">
+                  <button class="ghost-button is-active" data-prompt-view="generator" type="button">Generator Prompt</button>
+                  <button class="ghost-button" data-prompt-view="teacher" type="button">Teacher Prompt</button>
+                </div>
+                <button class="ghost-button" id="reloadTaskConfigButton" type="button">重载配置</button>
+                <button class="primary-button" id="editTaskConfigButton" type="button">编辑配置</button>
+                <button class="ghost-button" id="resetTaskConfigButton" type="button" hidden>取消编辑</button>
+                <button class="primary-button" id="saveTaskConfigButton" type="button" hidden>保存配置</button>
+              </div>
+            </div>
+
+            <div class="task-config-toolbar">
+              <div class="task-config-status" id="taskConfigStatus">配置已加载</div>
+              <div class="task-config-advice" id="taskConfigAdvice">
+                当前默认展示只读任务定义。点击“编辑配置”后进入独立编辑页面。
+              </div>
+            </div>
+
+            <div class="task-spec-read-view" id="taskSpecReadView">
+              <div class="task-spec-grid">
+                <article class="task-spec-block">
+                  <h3>任务概览</h3>
+                  <div class="task-spec-key-grid" id="taskSpecOverview"></div>
+                </article>
+                <article class="task-spec-block">
+                  <h3>Labels / Rules / Exports</h3>
+                  <div class="task-spec-chip-group" id="taskSpecLabels"></div>
+                  <div class="task-spec-key-grid" id="taskSpecRules"></div>
+                  <div class="task-spec-key-grid" id="taskSpecExports"></div>
+                </article>
+              </div>
+
+              <div class="task-spec-insight-grid">
+                <article class="task-spec-block">
+                  <h3>配置摘要</h3>
+                  <div class="task-spec-key-grid" id="taskConfigSummary"></div>
+                </article>
+                <article class="task-spec-block">
+                  <h3>运行影响</h3>
+                  <div class="task-spec-key-grid" id="taskConfigImpact"></div>
+                </article>
+              </div>
+
+              <div class="task-runtime-grid" id="taskRuntimeGrid"></div>
+
+              <article class="task-spec-block">
+                <h3>Scenario Matrix</h3>
+                <div class="task-scenario-grid" id="taskScenarioGrid"></div>
+              </article>
+
+              <article class="task-spec-block">
+                <h3>Prompt</h3>
+                <div class="task-prompt-meta" id="taskPromptMeta"></div>
+                <pre class="task-prompt-preview" id="taskPromptPreview">选择 task 后显示 prompt</pre>
+              </article>
+            </div>
+
+            <div class="task-spec-edit-view" id="taskSpecEditView" hidden>
+              <article class="task-spec-block task-edit-banner">
+                <h3>配置编辑</h3>
+                <p class="task-edit-copy">
+                  这里修改的是 task 的真实配置文件。保存后只影响后续新 run，不会改写已有运行产物。
+                </p>
+              </article>
+
+              <section class="config-editor-grid">
+                <article class="task-spec-block">
+                  <h3>基础信息</h3>
+                  <div class="config-form-grid" id="taskMetaForm"></div>
+                </article>
+
+                <article class="task-spec-block">
+                  <h3>运行参数</h3>
+                  <div class="config-runtime-grid" id="taskRuntimeEditor"></div>
+                </article>
+
+                <article class="task-spec-block">
+                  <h3>规则与导出</h3>
+                  <div class="config-form-grid" id="taskRulesEditor"></div>
+                  <div class="config-form-grid" id="taskExportsEditor"></div>
+                </article>
+
+                <article class="task-spec-block">
+                  <h3>标签管理</h3>
+                  <div class="config-chip-editor" id="taskLabelsEditor"></div>
+                </article>
+
+                <article class="task-spec-block config-scenario-block">
+                  <div class="config-section-head">
+                    <div>
+                      <h3>场景矩阵编辑</h3>
+                      <p>控制样本覆盖面、上下文和预计生成数量。</p>
+                    </div>
+                    <button class="ghost-button" id="addScenarioButton" type="button">新增 Scenario</button>
+                  </div>
+                  <div class="config-scenario-summary" id="taskScenarioSummary"></div>
+                  <div class="config-scenario-list" id="taskScenarioEditor"></div>
+                </article>
+
+                <article class="task-spec-block">
+                  <h3>Prompt 编辑</h3>
+                  <div class="config-prompt-editor" id="taskPromptEditor"></div>
+                </article>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel tab-panel artifact-panel" data-workbench-panel="artifacts" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Artifacts</p>
+                <h2>运行产物</h2>
+              </div>
+              <button class="ghost-button" id="reloadArtifactButton" type="button">刷新产物</button>
+            </div>
+
+            <div class="artifact-layout">
+              <div class="artifact-list" id="artifactList"></div>
+              <div class="artifact-preview">
+                <div class="artifact-meta" id="artifactMeta">选择左侧产物查看内容</div>
+                <div class="artifact-toolbar">
+                  <label class="artifact-toolbar-field">
+                    <span>搜索</span>
+                    <input id="artifactSearchInput" type="text" placeholder="sample_id / user_text / label" />
+                  </label>
+                  <label class="artifact-toolbar-field">
+                    <span>筛选</span>
+                    <select id="artifactFilterSelect">
+                      <option value="all">全部</option>
+                    </select>
+                  </label>
+                  <div class="artifact-view-switch" id="artifactViewSwitch">
+                    <button class="ghost-button is-active" data-artifact-view="structured" type="button">结构化</button>
+                    <button class="ghost-button" data-artifact-view="raw" type="button">Raw</button>
+                  </div>
+                  <div class="artifact-view-switch" id="rawCandidateViewSwitch" hidden>
+                    <button class="ghost-button is-active" data-raw-candidate-view="table" type="button">表格</button>
+                    <button class="ghost-button" data-raw-candidate-view="category" type="button">分类</button>
+                  </div>
+                  <label class="artifact-toolbar-field artifact-toolbar-field-compact" id="rawCandidateGroupByField" hidden>
+                    <span>分类维度</span>
+                    <select id="rawCandidateGroupBySelect">
+                      <option value="label_hint">label_hint</option>
+                      <option value="difficulty">difficulty</option>
+                      <option value="has_visible_report">has_visible_report</option>
+                      <option value="dialogue_stage">dialogue_stage</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="artifact-summary-bar" id="artifactSummaryBar"></div>
+                <div class="artifact-explainer" id="artifactExplainer">
+                  <div class="empty-state">选择左侧产物后显示该文件在流程中的作用、用途和阅读建议。</div>
+                </div>
+                <div class="artifact-structured-view" id="artifactStructuredView">
+                  <div class="empty-state">暂无内容</div>
+                </div>
+                <pre id="artifactPreview" hidden>暂无内容</pre>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel tab-panel review-panel" data-workbench-panel="review" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Review Workbench</p>
+                <h2>人工复核</h2>
+              </div>
+              <div class="review-actions">
+                <button class="ghost-button" id="reloadReviewButton" type="button">刷新复核</button>
+                <button class="primary-button" id="saveReviewButton" type="button">保存 review_results</button>
+              </div>
+            </div>
+
+            <div class="review-summary" id="reviewSummary"></div>
+            <div class="review-list" id="reviewList"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

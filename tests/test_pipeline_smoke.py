@@ -33,14 +33,35 @@ def test_pipeline_smoke(tmp_path: Path) -> None:
                 "reviewed_at": "2026-03-27T00:00:00+00:00",
             }
         )
+    if review_rows:
+        first_row = review_rows[0]
+        final_label = next(
+            label for label in ("chat", "rewrite_report", "regenerate_report") if label != first_row["teacher_label"]
+        )
+        review_results.append(
+            {
+                **first_row,
+                "review_decision": "corrected",
+                "reviewer_label": final_label,
+                "review_comment": "apply final correction",
+                "reviewed_by": "smoke-test-2",
+                "reviewed_at": "2026-03-27T00:05:00+00:00",
+            }
+        )
     write_jsonl(run.path_for("review_results"), review_results)
 
     review_validation = validate_review.run(run)
     build_gold.run(run)
     eval_outputs = eval_pipeline.run(run)
+    gold_samples = read_jsonl(run.path_for("gold_eval"))
 
     assert Path(outputs["filtered_train"]).exists()
     assert run.path_for("gold_eval").exists()
     assert Path(review_validation["review_validation_report"]).exists()
     assert Path(eval_outputs["eval_summary"]).exists()
-    assert read_jsonl(run.path_for("gold_eval"))
+    assert gold_samples
+    assert len({sample["id"] for sample in gold_samples}) == len(gold_samples)
+    if review_rows:
+        target_sample = next(sample for sample in gold_samples if sample["id"] == review_rows[0]["sample_id"])
+        assert target_sample["annotation"]["final_label"] == final_label
+        assert len(target_sample["annotation"]["review_history"]) == 2

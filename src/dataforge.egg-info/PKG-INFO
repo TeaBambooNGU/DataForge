@@ -4,8 +4,10 @@ Version: 0.1.0
 Summary: DataForge MVP platform skeleton
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.128.8
 Requires-Dist: pytest>=8.4.2
 Requires-Dist: pyyaml>=6.0.3
+Requires-Dist: uvicorn>=0.39.0
 
 # DataForge
 
@@ -17,5 +19,148 @@ DataForge is a minimal MVP scaffold for offline distillation workflows.
 uv run dataforge generate --task report-intent-distill
 uv run dataforge classify --task report-intent-distill
 uv run dataforge filter-export --task report-intent-distill
+uv run dataforge review-export --task report-intent-distill
+uv run dataforge validate-review --task report-intent-distill
+uv run dataforge build-gold --task report-intent-distill
+uv run dataforge eval --task report-intent-distill
+uv run dataforge run-all --task report-intent-distill
 uv run pytest
 ```
+
+## Run Versioning
+
+Every pipeline run now writes artifacts under:
+
+```text
+tasks/<task>/runs/<run_id>/
+```
+
+Examples:
+
+```bash
+uv run dataforge run-all --task report-intent-distill
+uv run dataforge classify --task report-intent-distill --run-id run-20260327T161558Z
+uv run dataforge eval --task report-intent-distill --run-id run-20260327T161558Z
+```
+
+Behavior:
+
+- `generate` and `run-all` create a new `run_id` if you do not pass `--run-id`
+- Other commands default to the latest run from `tasks/<task>/runs/latest.json`
+- Run metadata is indexed in `tasks/<task>/runs/index.json`
+- Each run now has a `status`: `created`, `generated`, `classified`, `filtered`, `review_exported`, `review_validated`, `gold_built`, `evaluated`
+- `validate-review` checks `review_results.jsonl` before `build-gold` and writes `reports/review_validation.md`
+
+Typical run layout:
+
+```text
+tasks/report-intent-distill/runs/<run_id>/
+  raw/
+  processed/
+  gold/
+  exports/
+  reports/
+```
+
+## OpenAI-Compatible Relay
+
+The provider layer supports `openai_compatible` for relay services that expose the standard chat completions API.
+
+Set runtime fields in `tasks/<task>/configs/task.yaml`:
+
+```yaml
+runtime:
+  generator:
+    provider: openai_compatible
+    model: gpt-5.3-codex
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    response_format_json_object: true
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+  teacher:
+    provider: openai_compatible
+    model: gpt-5.3-codex
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    response_format_json_object: true
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+  eval:
+    provider: openai_compatible
+    model: gpt-5.3-codex
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    response_format_json_object: true
+    max_retries: 2
+    retry_backoff_seconds: 1.0
+```
+
+Then export relay credentials:
+
+```bash
+export OPENAI_BASE_URL="https://your-relay.example.com/v1"
+export OPENAI_API_KEY="sk-..."
+```
+
+Or fill the project root [`.env`](/Users/teabamboo/Documents/AIplusLLM/DataForge/.env). The CLI now auto-loads that file before running any command.
+
+Retry behavior:
+
+- Retries apply to `408`, `409`, `429`, and `5xx`
+- Default retry count is `0` when `retry_policy=none`, otherwise `2`
+- You can override with `max_retries`, `retry_backoff_seconds`, and `max_retry_backoff_seconds`
+
+## Anthropic-Compatible And MiniMax
+
+The provider layer also supports `anthropic_compatible` for services that expose the Anthropic Messages API, and `minimax` as a shortcut that uses the same implementation with MiniMax-specific env var defaults.
+
+Anthropic-compatible example:
+
+```yaml
+runtime:
+  generator:
+    provider: anthropic_compatible
+    model: claude-3-5-haiku-20241022
+    base_url_env: ANTHROPIC_BASE_URL
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 1024
+    max_retries: 2
+  teacher:
+    provider: anthropic_compatible
+    model: claude-3-5-haiku-20241022
+    base_url_env: ANTHROPIC_BASE_URL
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 1024
+    max_retries: 2
+  eval:
+    provider: anthropic_compatible
+    model: claude-3-5-haiku-20241022
+    base_url_env: ANTHROPIC_BASE_URL
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 1024
+    max_retries: 2
+```
+
+MiniMax example:
+
+```yaml
+runtime:
+  generator:
+    provider: minimax
+    model: MiniMax-M2.5
+    max_tokens: 1024
+  teacher:
+    provider: minimax
+    model: MiniMax-M2.5
+    max_tokens: 1024
+  eval:
+    provider: minimax
+    model: MiniMax-M2.5
+    max_tokens: 1024
+```
+
+When `provider: minimax`, the runtime defaults to:
+
+- `base_url_env=MINIMAX_BASE_URL`
+- `api_key_env=MINIMAX_API_KEY`
