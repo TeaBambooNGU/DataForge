@@ -48,3 +48,4 @@ rules:
 exports:
   train_format: chatml_jsonl
   eval_format: promptfoo_jsonl
+  student_format: chatml_jsonl

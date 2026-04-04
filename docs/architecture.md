@@ -1,6 +1,6 @@
 # 工程架构梳理
 
-- 当前梳理时间: 2026-03-30 19:11:05
+- 当前梳理时间: 2026-04-04 10:30:00
 
 ## 项目概览
 - 项目定位: DataForge 是一个面向离线蒸馏数据生产的 MVP 脚手架，当前围绕 `report-intent-distill` 任务提供从样本生成、教师标注、筛选导出、人工复核到 gold 集构建和评测的全流程能力。
@@ -19,12 +19,16 @@
   8. 支持对关键运行产物进行结构化诊断浏览，而不是直接展示原始 JSONL 文本。
   9. 支持在 `eval` 阶段生成 Promptfoo tests、渲染运行时 Promptfoo 配置、调用本机 `promptfoo` CLI 并回收结果摘要。
   10. 支持对同一样本的多轮人工复核按 `sample_id` 聚合，并以最后一次有效人工结论构建 gold 集。
+  11. 支持按 `exports.train_format`、`exports.eval_format`、`exports.student_format` 生成配置化导出产物，而不是把训练/评测格式写死在主流程里。
+  12. 支持在 `filter-export` 阶段对训练样本执行跨 run 防泄漏去重，并把拦截摘要写入版本元数据。
+  13. 支持输出 `student-export` 训练标准产物，以及 train/eval/hard cases 的版本摘要文件。
 - 关键输出:
   1. `tasks/<task>/runs/<run_id>/raw/*.jsonl`：候选样本与教师标注结果。
   2. `tasks/<task>/runs/<run_id>/processed/*`：过滤后的训练集、带 `rejection_reason` 的拒绝集、复核导出、复核结果。
   3. `tasks/<task>/runs/<run_id>/gold/*`：gold 集与 hard cases。
-  4. `tasks/<task>/runs/<run_id>/exports/*` 与 `reports/*`：评测导出、预测结果、Promptfoo 运行时配置、Promptfoo 原始结果、评测总结、stage manifest。
-  5. `frontend/*`：本地工作台静态资源。
+  4. `tasks/<task>/runs/<run_id>/exports/*` 与 `reports/*`：训练导出、评测导出、版本元数据、预测结果、结构化 eval 摘要、Promptfoo 运行时配置、Promptfoo 原始结果、评测总结、stage manifest。
+  5. `tasks/<task>/runs/<run_id>/training/*`：student 标准训练输入与训练版本元数据。
+  6. `frontend/*`：本地工作台静态资源。
 
 ## 工程逻辑梳理
 
@@ -48,12 +52,13 @@
   4. [src/dataforge/core/registry.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/registry.py)：任务发现、配置加载、`TaskConfig`/`TaskRun` 建模、run 状态推进、产物路径映射。
   5. [src/dataforge/core/io.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/io.py)：YAML/JSON/JSONL/Text 读写、目录保障、manifest 持久化。
   6. [src/dataforge/core/schemas.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/schemas.py)：样本 schema 校验，覆盖 candidate/classified/reviewed/gold 四个 stage。
-  7. [src/dataforge/core/filters.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/filters.py) 与 [src/dataforge/core/dedupe.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/dedupe.py)：样本去重、规则过滤、review pool 划分。
+  7. [src/dataforge/core/filters.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/filters.py) 与 [src/dataforge/core/dedupe.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/dedupe.py)：样本去重、规则过滤、review pool 划分，以及跨 run 历史泄漏拦截。
   8. [src/dataforge/core/review.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/review.py)：复核记录模板、复核校验、复核统计、多轮 review 聚合与 review 应用。
   9. [src/dataforge/core/eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/eval_runner.py)：评测指标计算、Promptfoo tests 导出、运行时 Promptfoo 配置生成、Promptfoo CLI 执行与 summary/confusion 报告生成。
-  10. [src/dataforge/providers/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/providers)：provider 抽象与具体模型接入。
-  11. [src/dataforge/pipelines/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines)：按 stage 划分的流水线执行单元。
-  12. [tasks/report-intent-distill/configs/](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/configs)：任务级静态配置、prompt、labels、scenario matrix。
+  10. [src/dataforge/core/exporters.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/exporters.py) 与 [src/dataforge/core/versioning.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/versioning.py)：导出格式渲染、Promptfoo 测试结构复用、数据版本摘要生成。
+  11. [src/dataforge/providers/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/providers)：provider 抽象与具体模型接入。
+  12. [src/dataforge/pipelines/](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines)：按 stage 划分的流水线执行单元，现包含 `student_export.py`。
+  13. [tasks/report-intent-distill/configs/](/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/configs)：任务级静态配置、prompt、labels、scenario matrix。
 - 关键职责:
   1. `registry` 负责统一 run 生命周期，保证 `index.json`、`latest.json`、`status`、`last_stage`、`stages` 同步更新。
   2. `pipelines` 各自只处理单一 stage，并在结束后写入对应 manifest。
@@ -65,7 +70,9 @@
   8. `frontend` 在产物展示上默认只展示实际存在的 artifact，并隐藏 `*_manifest`，结构化浏览优先于原始 JSONL 转储。
   9. `frontend/app.js` 中 `ARTIFACT_EXPLANATIONS` 与 `renderArtifactExplanation()` 为每个 artifact 提供“用途/阶段/阅读提示”说明，降低直接查看中间产物的理解成本。
   10. `core/review.py` 中 `group_review_records()` 与 `merge_review_records()` 负责将同一样本的多轮复核记录按输入顺序聚合，再由 `build_gold` 只消费每个 `sample_id` 的最终状态，避免重复产出 gold 样本。
-  11. `core/eval_runner.py` 中 `build_promptfoo_runtime_config()` 会把任务侧 `promptfoo.yaml` 渲染为 run 级配置文件，`run_promptfoo_eval()` 则调用本机 `promptfoo eval` 并回收结果摘要。
+  11. `core/eval_runner.py` 中 `build_promptfoo_runtime_config()` 会把任务侧 `promptfoo.yaml` 渲染为 run 级配置文件，`run_promptfoo_eval()` 则调用本机 `promptfoo eval` 并回收结果摘要，`build_eval_result()` 则把评测结果转成结构化 `eval_result.json`。
+  12. `core/exporters.py` 负责把内部样本转换为 `chatml_jsonl`、`prediction_jsonl`、`promptfoo_jsonl` 等目标格式，主流程只消费导出接口，不直接写死格式。
+  13. `core/versioning.py` 负责给 train/eval/hard cases/student 产物生成统一版本摘要，便于 run 内回放与追责。
 - 主要依赖:
   1. `fastapi`：提供本地工作台 HTTP API。
   2. `uvicorn`：提供本地 ASGI 服务启动。
@@ -86,10 +93,11 @@
   2. Web API 依赖 `core.env`、`core.io`、`core.registry`、`core.review` 和各 pipeline。
   3. 前端只通过 `fetch()` 调用本地 HTTP API，不直接触达文件系统。
   4. `pipelines.generate/classify/eval` 依赖 provider registry 获取具体 provider。
-  5. `pipelines.filter_export` 依赖 `dedupe`、`filters`、`io`、`registry`，其中 `filters.reject_sample()` 负责为拒绝样本写入 `rejection_reason`。
+  5. `pipelines.filter_export` 依赖 `dedupe`、`filters`、`exporters`、`versioning`、`io`、`registry`，其中 `exclude_historical_leakage()` 负责基于历史 `gold/eval/hard_cases` 拦截潜在泄漏样本。
   6. `pipelines.review_export/validate_review/build_gold` 依赖 `review` 模块处理人工复核闭环，其中 `build_gold` 基于多轮 review 聚合后的最终状态构建 gold。
   7. `TaskRun.path_for()` 是运行期文件寻址的中心入口，CLI stage 与 Web API 均通过 artifact key 间接访问具体路径。
-  8. `pipelines.eval` 依赖 `core.eval_runner` 生成 Promptfoo tests、运行时配置和 CLI 调用摘要，同时复用 provider registry 产出 DataForge 自己的预测结果。
+  8. `pipelines.eval` 依赖 `core.eval_runner` 生成 Promptfoo tests、运行时配置和 CLI 调用摘要，同时复用 provider registry 产出 DataForge 自己的预测结果，并写出 `eval_result.json` 与 `eval_dataset_metadata.json`。
+  9. `pipelines.student_export` 依赖 `core.exporters` 与 `core.versioning`，把过滤后的训练样本打包成标准 student 训练输入。
 
 ### 数据流/控制流
 - 数据来源:
@@ -101,11 +109,12 @@
 - CLI 数据处理链路:
   1. `generate`：读取 scenario matrix，调用 generator provider 产出 `raw/raw_candidates.jsonl`，并做 schema 校验。
   2. `classify`：读取候选样本，调用 teacher provider 输出 `raw/teacher_labeled.jsonl`，在 `annotation` 中补齐教师标签、原始输出、解析状态与错误码。
-  3. `filter-export`：读取教师标注结果，基于 `user_text`、`parse_ok`、允许标签、长度限制和任务规则过滤；先按 `(user_text.lower(), has_visible_report, teacher_label)` 去重，再拆分出训练集、带 `rejection_reason` 的拒绝集、复核池与空的 promptfoo eval 占位文件。
+  3. `filter-export`：读取教师标注结果，基于 `user_text`、`parse_ok`、允许标签、长度限制和任务规则过滤；先按 `(user_text.lower(), has_visible_report, teacher_label)` 去重，再对训练子集执行跨 run 泄漏拦截，最后输出内部训练样本、配置化 train export、版本元数据、拒绝集、复核池与空的 Promptfoo 占位文件。
   4. `review-export`：把 review pool 组装成待人工复核模板 `processed/review_candidates.jsonl`。
   5. `validate-review`：校验 `processed/review_results.jsonl`，输出 `reports/review_validation.md`。
-  6. `build-gold`：先按 `sample_id` 聚合同一样本的多轮人工复核记录，再将最终有效结论回写到教师标注样本，冻结为 `gold/gold_eval.jsonl`，并抽取 hard cases。
-  7. `eval`：对 gold 集重新做预测，输出 `exports/eval_predictions.jsonl`、`exports/eval_for_promptfoo.jsonl`、`reports/promptfoo/config.yaml`、`reports/promptfoo/results.json`、`reports/eval_summary.md`、`reports/confusion_analysis.md`。
+  6. `build-gold`：先按 `sample_id` 聚合同一样本的多轮人工复核记录，再将最终有效结论回写到教师标注样本，冻结为 `gold/gold_eval.jsonl`，并抽取带 `hard_case_reason` / `hard_case_recorded_at` 的 hard cases，同时输出 `hard_cases_metadata.json`。
+  7. `eval`：对 gold 集重新做预测，输出 `exports/eval_dataset.jsonl`、`exports/eval_dataset_metadata.json`、`exports/eval_predictions.jsonl`、`exports/eval_for_promptfoo.jsonl`、`reports/eval_result.json`、`reports/promptfoo/config.yaml`、`reports/promptfoo/results.json`、`reports/eval_summary.md`、`reports/confusion_analysis.md`。
+  8. `student-export`：读取 `processed/filtered_train.jsonl`，按 `exports.student_format` 生成 `training/student_train.jsonl` 与 `training/metadata.json`。
 - Web 控制流:
   1. 前端初始化后先调用 `GET /api/tasks`，加载 task 列表及最新 run 摘要。
   2. 选择 task 后，前端继续调用 `GET /api/tasks/{task_name}/spec`、`GET /api/tasks/{task_name}/config-files` 和 `GET /api/tasks/{task_name}/runs`，分别加载只读任务定义、可编辑配置草稿和 run 列表。
@@ -138,7 +147,7 @@
   2. `model`、`temperature`、`max_tokens`、`max_retries`、`retry_backoff_seconds`：控制模型调用与重试。
   3. `paths.*`：静态配置和 prompt 文件的项目内绝对解析入口。
   4. `rules.disallow_rewrite_without_visible_report`：过滤阶段的重要业务约束。
-  5. `exports.*`：训练集与评测导出的目标格式声明。
+  5. `exports.*`：训练集、评测集与 student 训练产物的目标格式声明。
   6. `scenario.generation_count`：控制该场景预计生成多少样本；若留空，则退化为 `templates` 条数。
   7. `rejection_reason`：`filter-export` 输出给拒绝样本的诊断字段，用于前端汇总、筛选和问题定位。
   8. Web 启动参数 `--host`、`--port`、`--project-root`：控制本地工作台绑定地址与项目根目录。
@@ -155,7 +164,8 @@
 - CLI 工作流:
   1. 通过 `uv run dataforge generate --task report-intent-distill` 或 `run-all` 创建新的 `run_id`。
   2. 在自动流程结束后，人工或外部工具填充 `processed/review_results.jsonl`。
-  3. 继续运行 `validate-review`、`build-gold`、`eval` 完成闭环；其中 `eval` 会额外在当前 run 下写入 Promptfoo 配置与原始结果。
+  3. 继续运行 `validate-review`、`build-gold`、`eval` 完成闭环；其中 `eval` 会额外在当前 run 下写入 Promptfoo 配置、结构化评测摘要与 eval 版本元数据。
+  4. 如需交给 student 训练，再运行 `student-export` 输出 `training/student_train.jsonl` 与 `training/metadata.json`。
 - Web 工作流:
   1. 通过 `uv run dataforge-web --host 127.0.0.1 --port 8013` 启动本地工作台。
   2. 浏览器打开首页后，左侧选择 task / run，顶部通过页签在“运行控制”“任务定义”“运行产物”“人工复核”之间切换。
@@ -178,10 +188,19 @@
   7. `eval` 若找不到本机 `promptfoo` 命令，或 Promptfoo 运行失败，会在 `run_promptfoo_eval()` 中直接抛出异常并终止当前阶段。
 - 观测与日志:
   1. 当前没有统一日志系统或链路追踪。
-  2. 可观测性主要依赖 `reports/manifests/*.json`、`reports/promptfoo/results.json`、`eval_summary.md`、`confusion_analysis.md`、`review_validation.md`、`runs/index.json` 与前端消息条。
-  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程，`tests/test_eval_runner.py` 覆盖 Promptfoo tests 导出、运行时配置渲染与 CLI 调用抽象；本地工作台当前主要依赖 `node --check frontend/app.js` 与 `create_app()` 路由存在性做最小验证。
+  2. 可观测性主要依赖 `reports/manifests/*.json`、`reports/eval_result.json`、`exports/*_metadata.json`、`reports/promptfoo/results.json`、`eval_summary.md`、`confusion_analysis.md`、`review_validation.md`、`runs/index.json` 与前端消息条。
+  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程，`tests/test_eval_runner.py` 覆盖 Promptfoo 集成与结构化摘要，`tests/test_exporters.py` 覆盖导出层，`tests/test_student_export.py` 与 `tests/test_dedupe.py` 分别覆盖 student 出口与防泄漏逻辑；前端仍通过 `node --check frontend/app.js` 做最小语法校验。
 
 ## 改动概要/变更记录
+
+### 2026-04-04 10:30:00
+- 本次新增/更新要点:
+  1. 根据最新代码补齐配置化导出层，更新 [src/dataforge/core/exporters.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/exporters.py) 与 [src/dataforge/pipelines/filter_export.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines/filter_export.py)、[src/dataforge/pipelines/eval.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines/eval.py) 的 train/eval export 说明。
+  2. 更新 `eval` 阶段说明，补充 [src/dataforge/core/eval_runner.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/eval_runner.py) 生成 `eval_result.json`、run 摘要与结构化 Promptfoo 概览的行为。
+  3. 更新数据治理说明，补充 [src/dataforge/core/dedupe.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/dedupe.py) 的跨版本泄漏拦截，以及 `*_metadata.json` 版本摘要文件。
+  4. 更新训练出口说明，补充 [src/dataforge/pipelines/student_export.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/pipelines/student_export.py) 与 `training/` 目录约定。
+- 变更动机/需求来源: 用户要求继续实现 checklist 中所有尚未落地的工程项，并同步文档到最新代码行为。
+- 当前更新时间: 2026-04-04 10:30:00
 
 ### 2026-03-30 19:11:05
 - 本次新增/更新要点:

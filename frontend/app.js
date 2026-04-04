@@ -8,7 +8,7 @@ const state = {
   configDirty: false,
   configSaving: false,
   isEditingTaskConfig: false,
-  activeTab: "run-control",
+  activeTab: "task-spec",
   promptView: "generator",
   selectedRunId: null,
   selectedRun: null,
@@ -21,6 +21,7 @@ const state = {
   artifactFilter: "all",
   reviewRecords: [],
   reviewLabels: [],
+  reviewFilter: "all",
   loadingCommand: null,
   deletingRunId: null,
 };
@@ -84,6 +85,35 @@ const PIPELINE_STAGES = [
   },
 ];
 
+const NEW_RUN_COMMANDS = new Set(["generate", "run-all"]);
+
+const REVIEW_DECISION_DETAILS = {
+  pending: {
+    label: "pending",
+    display: "待处理",
+    description: "暂不下最终结论，只保留这条复核记录，不改 human_label。",
+    requirement: "不会进入 gold，适合还要回看上下文或等待二次确认的样本。",
+  },
+  accepted: {
+    label: "accepted",
+    display: "接受教师标签",
+    description: "人工确认 teacher_label 正确，最终标签沿用教师结果。",
+    requirement: "会进入 gold；如果 Reviewer Label 留空，保存时会自动回填 teacher_label。",
+  },
+  corrected: {
+    label: "corrected",
+    display: "人工改标",
+    description: "人工认为 teacher_label 不对，并改成新的最终标签。",
+    requirement: "会进入 gold；必须填写 Reviewer Label，最终以人工标签为准。",
+  },
+  rejected: {
+    label: "rejected",
+    display: "拒绝样本",
+    description: "这条样本不应进入最终数据，通常因为样本质量或可判定性有问题。",
+    requirement: "不会进入 gold；必须填写 Comment，说明拒绝原因。",
+  },
+};
+
 const taskListEl = document.getElementById("taskList");
 const runListEl = document.getElementById("runList");
 const artifactListEl = document.getElementById("artifactList");
@@ -124,6 +154,7 @@ const taskSpecRulesEl = document.getElementById("taskSpecRules");
 const taskSpecExportsEl = document.getElementById("taskSpecExports");
 const taskSpecReadViewEl = document.getElementById("taskSpecReadView");
 const taskSpecEditViewEl = document.getElementById("taskSpecEditView");
+const taskDossierHeroEl = document.getElementById("taskDossierHero");
 const taskRuntimeGridEl = document.getElementById("taskRuntimeGrid");
 const taskScenarioGridEl = document.getElementById("taskScenarioGrid");
 const taskPromptMetaEl = document.getElementById("taskPromptMeta");
@@ -145,7 +176,9 @@ const pipelineOverviewEl = document.getElementById("pipelineOverview");
 const stageTimelineEl = document.getElementById("stageTimeline");
 const runChecklistEl = document.getElementById("runChecklist");
 
-const commandButtons = Array.from(document.querySelectorAll(".command-button"));
+const taskActionButtons = Array.from(document.querySelectorAll('[data-command-scope="task"]'));
+const runCommandButtons = Array.from(document.querySelectorAll('[data-command-scope="run"]'));
+const allCommandButtons = [...taskActionButtons, ...runCommandButtons];
 const refreshAllButton = document.getElementById("refreshAllButton");
 const reloadArtifactButton = document.getElementById("reloadArtifactButton");
 const reloadReviewButton = document.getElementById("reloadReviewButton");
@@ -176,6 +209,18 @@ const ARTIFACT_EXPLANATIONS = {
     role: "经过去重和规则过滤后，可以直接进入训练的数据子集。",
     usage: "这是最终可训练样本池，适合看数据纯度和标签分布是否符合预期。",
     readingHint: "如果这里数量偏少，回头检查 teacher_labeled、过滤规则和 rejected_samples。",
+  },
+  train_export: {
+    stage: "filter-export",
+    role: "按 `exports.train_format` 渲染出来的训练导出文件，用于下游 student 或外部训练器消费。",
+    usage: "这里反映的是配置化导出格式，不一定和内部 `filtered_train` 的原始样本结构相同。",
+    readingHint: "先确认格式字段是否符合预期，再决定是否继续接训练执行器。",
+  },
+  train_export_metadata: {
+    stage: "filter-export",
+    role: "训练导出版本摘要，记录格式、样本数和历史泄漏拦截结果。",
+    usage: "需要确认跨版本去重是否生效时，优先看这份元数据而不是手动翻 rejected_samples。",
+    readingHint: "重点看 version_id、historical_leakage、sample_count。",
   },
   rejected_samples: {
     stage: "filter-export",
@@ -224,6 +269,42 @@ const ARTIFACT_EXPLANATIONS = {
     role: "模型在 gold 集上的预测结果，包含 expected/predicted/parse/error 等关键信息。",
     usage: "用来做误差分析、混淆对比和回归质量判断。",
     readingHint: "先看 mismatch 和 parse_fail，再从表格里追具体错例。",
+  },
+  eval_export: {
+    stage: "eval",
+    role: "按 `exports.eval_format` 渲染出来的评测导出文件，用于外部评测器或离线分析程序消费。",
+    usage: "这是配置化评测导出，不等同于 Promptfoo 运行时必须使用的内部输入文件。",
+    readingHint: "如果更换了 eval_format，优先确认这里的结构是否与目标评测框架匹配。",
+  },
+  eval_export_metadata: {
+    stage: "eval",
+    role: "评测导出版本摘要，记录本次 eval 导出版本、样本数和来源路径。",
+    usage: "需要追踪某版评测集来自哪次 run、使用何种格式时，优先查看这里。",
+    readingHint: "重点看 version_id、format、source_paths、hard_case_sample_count。",
+  },
+  student_train: {
+    stage: "student-export",
+    role: "标准化 student 训练输入文件，是后续训练执行器最直接消费的产物。",
+    usage: "如果准备接 student 蒸馏或分类训练，优先使用这份文件而不是内部中间样本。",
+    readingHint: "先确认消息结构、标签编码和 sample_count，再决定是否启动训练。",
+  },
+  training_metadata: {
+    stage: "student-export",
+    role: "student 训练产物的版本说明，记录来源 run、格式、样本量和回流约束。",
+    usage: "用于追踪这版训练输入来自哪里，以及是否包含 hard cases 等关键治理信息。",
+    readingHint: "优先看 version_id、source_artifact、format、includes_hard_cases。",
+  },
+  hard_cases_metadata: {
+    stage: "build-gold",
+    role: "hard cases 版本摘要，记录来源原因分布与回流日期。",
+    usage: "用于治理 hard cases 资产，而不是直接看逐条样本才知道为什么进 hard cases。",
+    readingHint: "重点看 source_reason_breakdown、reflow_date、sample_count。",
+  },
+  eval_result: {
+    stage: "eval",
+    role: "结构化评测摘要，汇总数据规模、核心指标、错例概况和 Promptfoo 结果。",
+    usage: "这是 API 和前端读取 eval 结论的主摘要文件，适合快速确认一次 run 是否达到可保留基线。",
+    readingHint: "先看 metrics、quality、promptfoo 三段，再决定是否继续追 `eval_predictions` 或 `confusion_analysis`。",
   },
   eval_summary: {
     stage: "eval",
@@ -313,11 +394,11 @@ const ARTIFACT_CATEGORY_META = {
 const RECOMMENDED_ARTIFACTS_BY_STAGE = {
   generate: ["raw_candidates"],
   classify: ["teacher_labeled"],
-  "filter-export": ["rejected_samples", "filtered_train"],
+  "filter-export": ["rejected_samples", "filtered_train", "train_export"],
   "review-export": ["review_candidates"],
   "validate-review": ["review_results", "review_validation_report"],
   "build-gold": ["gold_eval", "hard_cases"],
-  eval: ["eval_summary", "confusion_analysis", "eval_predictions"],
+  eval: ["eval_export", "eval_result", "eval_summary", "confusion_analysis", "eval_predictions"],
 };
 
 async function api(path, options = {}) {
@@ -394,8 +475,38 @@ function getRejectionReasonLabel(reason) {
     text_too_short: "文本过短",
     text_too_long: "文本过长",
     rewrite_without_visible_report: "无可见报告却判为 rewrite_report",
+    historical_leakage: "与历史 gold/eval/hard_cases 冲突",
   };
   return labels[reason] || reason || "-";
+}
+
+function getReviewDecisionDetail(decision) {
+  return REVIEW_DECISION_DETAILS[decision] || REVIEW_DECISION_DETAILS.pending;
+}
+
+function renderReviewDecisionOptions(selectedDecision) {
+  return Object.values(REVIEW_DECISION_DETAILS)
+    .map(
+      (detail) => `
+        <option value="${escapeHtml(detail.label)}" ${selectedDecision === detail.label ? "selected" : ""}>
+          ${escapeHtml(`${detail.label} | ${detail.display}`)}
+        </option>
+      `
+    )
+    .join("");
+}
+
+function renderReviewDecisionGuide(selectedDecision) {
+  const active = getReviewDecisionDetail(selectedDecision);
+  return `
+    <div class="review-decision-active-note">
+      <div class="review-decision-item-head">
+        <strong>当前选择：${escapeHtml(`${active.label} | ${active.display}`)}</strong>
+      </div>
+      <p>${escapeHtml(active.description)}</p>
+      <span class="review-decision-item-note">${escapeHtml(active.requirement)}</span>
+    </div>
+  `;
 }
 
 function cloneData(value) {
@@ -501,7 +612,41 @@ function getStageState(run, command) {
   return "idle";
 }
 
+function getCommandAvailability(command, run) {
+  if (!state.selectedTask) {
+    return { disabled: true, reason: "no-task" };
+  }
+  if (state.loadingCommand) {
+    return { disabled: true, reason: "busy" };
+  }
+  if (NEW_RUN_COMMANDS.has(command)) {
+    return { disabled: false, reason: null };
+  }
+  if (!run) {
+    return { disabled: true, reason: "no-run" };
+  }
+  const stage = getStageByCommand(command);
+  if (stage && getCompletedStageKeys(run).has(stage.stageKey)) {
+    return { disabled: true, reason: "completed" };
+  }
+  return { disabled: false, reason: null };
+}
+
+function getTaskActionState(command) {
+  if (state.loadingCommand === command) {
+    return "running";
+  }
+  if (command === "run-all") {
+    return "batch";
+  }
+  return "idle";
+}
+
 function getStageStatsPreview(run, stageKey) {
+  if (stageKey === "eval" && run?.evaluation) {
+    const summary = run.evaluation;
+    return `acc: ${formatArtifactValue(summary.overall_accuracy)} / f1: ${formatArtifactValue(summary.macro_f1)}`;
+  }
   const stats = run?.stages?.[stageKey]?.stats;
   if (!stats || typeof stats !== "object") {
     return null;
@@ -525,18 +670,49 @@ function buildRecommendedAction(task, run) {
     };
   }
 
+  if (state.activeTab === "task-spec") {
+    if (state.isEditingTaskConfig) {
+      return {
+        title: "先完成这份任务卷宗",
+        body: "当前在编辑 task 配置。优先校对 scenario、runtime、prompts 与 exports，确认无误后保存，再从本页发起新 run。",
+        meta: [
+          ["模式", "任务定义 / 编辑"],
+          ["labels", String(task.labels?.length || 0)],
+        ],
+      };
+    }
+    return {
+      title: "任务定义是唯一的新建入口",
+      body: "先在本页确认 task 的主题、标签体系、scenario matrix 与 prompts，然后再用 generate 或 run-all 发起新的 run。",
+      meta: [
+        ["模式", "任务定义 / 只读"],
+        ["runs", String(task.run_count || 0)],
+      ],
+    };
+  }
+
   if (!run) {
     return {
-      title: "先创建第一个 run",
-      body: "建议先执行 run-all 快速跑通前四个阶段；如果只想验证生成质量，可以先单独执行 generate。",
+      title: "先去任务定义页新建 run",
+      body: "“任务定义”页提供 task 级的新建 run 入口；首次验证整条链路优先用 run-all，只看生成质量再单独用 generate。",
       meta: [
-        ["推荐命令", "run-all"],
+        ["推荐入口", "任务定义 / run-all"],
         ["当前状态", "尚未选择 run"],
       ],
     };
   }
 
   const nextStage = getNextStage(run);
+  if (nextStage?.command === "generate") {
+    return {
+      title: "当前 run 尚未真正启动",
+      body: "generate 已移到“任务定义”页；如果这是空 run，建议直接删除它，再到“任务定义”页重新新建。",
+      meta: [
+        ["当前进度", getProgressText(run)],
+        ["建议入口", "任务定义 / generate"],
+      ],
+    };
+  }
   if (!nextStage) {
     return {
       title: "当前 run 已完成闭环",
@@ -569,6 +745,7 @@ function renderOperationalNarrative() {
   const task = state.selectedTask;
   const run = state.selectedRun;
   const recommendation = buildRecommendedAction(task, run);
+  const taskScopedView = state.activeTab === "task-spec";
 
   workspaceContextEl.innerHTML = buildSummaryChips([
     ["theme", task?.theme || "-"],
@@ -576,7 +753,7 @@ function renderOperationalNarrative() {
     ["language", task?.language || "-"],
     ["labels", String(task?.labels?.length || 0)],
     ["runs", String(task?.run_count || 0)],
-    ["progress", run ? getProgressText(run) : "0/7 stages"],
+    [taskScopedView ? "mode" : "progress", taskScopedView ? "任务卷宗" : run ? getProgressText(run) : "0/7 stages"],
   ]);
 
   recommendedActionTitleEl.textContent = recommendation.title;
@@ -607,25 +784,59 @@ function renderOperationalNarrative() {
     `;
   }).join("");
 
-  commandButtons.forEach((button) => {
+  taskActionButtons.forEach((button) => {
     const command = button.dataset.command;
-    const stageState = command === "run-all" ? "batch" : getStageState(run, command);
+    const availability = getCommandAvailability(command, run);
+    const stageState = getTaskActionState(command);
     button.classList.toggle("is-complete", stageState === "complete");
     button.classList.toggle("is-next", stageState === "next");
     button.classList.toggle("is-shortcut", stageState === "batch");
     button.dataset.stageState = stageState;
+    button.disabled = availability.disabled;
     const stateEl = button.querySelector(".command-state");
     if (stateEl) {
-      stateEl.textContent =
-        stageState === "complete"
-          ? "completed"
-          : stageState === "running"
-            ? "running"
-            : stageState === "next"
-              ? "recommended"
-              : command === "run-all"
-                ? "first pass"
-                : "available";
+      let stateText = "available";
+      if (stageState === "complete") {
+        stateText = "completed";
+      } else if (stageState === "running") {
+        stateText = "running";
+      } else if (availability.reason === "no-task") {
+        stateText = "select task";
+      } else if (availability.reason === "no-run") {
+        stateText = "select run";
+      } else if (stageState === "next") {
+        stateText = "recommended";
+      } else if (command === "run-all") {
+        stateText = "first pass";
+      }
+      stateEl.textContent = stateText;
+    }
+  });
+
+  runCommandButtons.forEach((button) => {
+    const command = button.dataset.command;
+    const availability = getCommandAvailability(command, run);
+    const stageState = getStageState(run, command);
+    button.classList.toggle("is-complete", stageState === "complete");
+    button.classList.toggle("is-next", stageState === "next");
+    button.classList.toggle("is-shortcut", false);
+    button.dataset.stageState = stageState;
+    button.disabled = availability.disabled;
+    const stateEl = button.querySelector(".command-state");
+    if (stateEl) {
+      let stateText = "available";
+      if (stageState === "complete") {
+        stateText = "completed";
+      } else if (stageState === "running") {
+        stateText = "running";
+      } else if (availability.reason === "no-task") {
+        stateText = "select task";
+      } else if (availability.reason === "no-run") {
+        stateText = "select run";
+      } else if (stageState === "next") {
+        stateText = "recommended";
+      }
+      stateEl.textContent = stateText;
     }
   });
 
@@ -638,7 +849,7 @@ function renderOperationalNarrative() {
       </article>
       <article class="operator-note-card">
         <strong>首次执行建议</strong>
-        <span>如果是第一次验证整条链路，优先使用 run-all；如果只想检查生成质量，先运行 generate。</span>
+        <span>当前页只负责推进已有 run；要新建 run，请切到“任务定义”页，首次跑通优先用 run-all。</span>
       </article>
     `;
     return;
@@ -667,14 +878,18 @@ function renderOperationalNarrative() {
   runChecklistEl.innerHTML = [
     {
       title: "推荐动作",
-      body: nextStage
+      body: nextStage?.command === "generate"
+        ? "这是一条尚未启动的空 run。generate 已在“任务定义”页提供，通常应删除这条空 run 后重新新建。"
+        : nextStage
         ? `继续执行 ${nextStage.command}，避免 run 停留在 ${run.last_stage || "created"}。`
         : "这条 run 已完成全部阶段，建议转去产物页做评测结论确认。",
     },
     {
       title: "优先查看",
       body:
-        run.last_stage === "generate"
+        !run.last_stage
+          ? "当前 run 还没有进入任何阶段；如果这是误创建的空 run，直接删除并到“任务定义”页重新新建。"
+          : run.last_stage === "generate"
           ? "先看 raw_candidates，确认场景覆盖和 user_text 质量，但别把 label_hint 当成正式标签。"
           : run.last_stage === "classify"
             ? "先看 teacher_labeled，确认 parse_fail 是否可接受，并核对 teacher_label 是否符合真实分类边界。"
@@ -683,8 +898,14 @@ function renderOperationalNarrative() {
               : run.last_stage === "review-export"
                 ? "review_candidates 已准备好，下一步应补齐 review_results。"
                 : run.last_stage === "eval"
-                  ? "优先看 eval_summary、confusion_analysis 与 eval_predictions。"
+                  ? "优先看 eval_result、eval_summary、confusion_analysis 与 eval_predictions。"
                   : "根据当前阶段选择最相关的 artifact 查看细节。",
+    },
+    {
+      title: "评测快照",
+      body: run.evaluation
+        ? `samples=${run.evaluation.sample_count}，accuracy=${run.evaluation.overall_accuracy}，macro_f1=${run.evaluation.macro_f1}，promptfoo=${run.evaluation.promptfoo_status || "unknown"}。`
+        : "当前 run 还没有结构化 eval 摘要；完成 eval 后这里会直接显示关键指标。",
     },
     {
       title: "风险提示",
@@ -740,6 +961,7 @@ function renderWorkbenchTabs() {
 function setActiveTab(tabName) {
   state.activeTab = tabName;
   renderWorkbenchTabs();
+  renderSummary();
 }
 
 function renderTaskSpecMode() {
@@ -1036,6 +1258,31 @@ function buildTaskSpecView() {
 }
 
 function renderTaskSpecReadOnly(view) {
+  const runCount = state.selectedTask?.run_count || 0;
+  const estimatedSamples = totalEstimatedSamples(state.taskConfig?.scenarios || view.scenarios || []);
+  taskDossierHeroEl.innerHTML = `
+    <div class="task-dossier-ribbon">Task Dossier</div>
+    <div class="task-dossier-grid">
+      <div>
+        <p class="task-dossier-eyebrow">${escapeHtml(view.task_type || "task")}</p>
+        <h3 class="task-dossier-title">${escapeHtml(view.name)}</h3>
+        <p class="task-dossier-copy">
+          这页只负责定义任务边界、样本空间与运行规范。run 是执行实例，不在这里混入状态推进。
+        </p>
+      </div>
+      <div class="task-dossier-matrix">
+        <span><strong>theme</strong>${escapeHtml(view.theme || "-")}</span>
+        <span><strong>language</strong>${escapeHtml(view.language || "-")}</span>
+        <span><strong>labels</strong>${escapeHtml(String((view.labels || []).length))}</span>
+        <span><strong>runs</strong>${escapeHtml(String(runCount))}</span>
+      </div>
+    </div>
+    <div class="task-dossier-foot">
+      <span>${escapeHtml(runCount ? `${runCount} 条运行记录可追溯` : "还没有 run，适合先校对定义后启动首轮")}</span>
+      <span>${escapeHtml(`estimated samples: ${estimatedSamples}`)}</span>
+    </div>
+  `;
+
   renderKeyGrid(taskSpecOverviewEl, [
     ["name", view.name],
     ["theme", view.theme],
@@ -1109,6 +1356,7 @@ function renderTaskSpecReadOnly(view) {
 
 function renderTaskSpec() {
   if (!state.taskSpec) {
+    taskDossierHeroEl.innerHTML = '<div class="empty-state">选择 task 后显示任务卷宗。</div>';
     taskSpecOverviewEl.innerHTML = '<div class="empty-state">选择 task 后显示任务定义。</div>';
     taskSpecLabelsEl.innerHTML = "";
     taskSpecRulesEl.innerHTML = "";
@@ -1170,6 +1418,17 @@ function renderArtifactSummary(payload, records) {
     const parseFailures = records.filter((record) => record.parse_ok === false).length;
     summary.push(["mismatch", mismatches]);
     summary.push(["parse_fail", parseFailures]);
+  }
+  if (payload.key === "eval_result") {
+    const metrics = payload.content?.metrics || {};
+    const quality = payload.content?.quality || {};
+    const promptfoo = payload.content?.promptfoo?.summary || {};
+    summary.push(["accuracy", metrics.overall_accuracy]);
+    summary.push(["macro_f1", metrics.macro_f1]);
+    summary.push(["parse_fail", quality.parse_failure_count]);
+    if (promptfoo.pass_rate != null) {
+      summary.push(["promptfoo_pass", promptfoo.pass_rate]);
+    }
   }
   if (payload.key === "gold_eval") {
     const hardCases = records.filter(
@@ -1884,6 +2143,99 @@ function renderArtifactJsonStructured(payload) {
     artifactStructuredViewEl.innerHTML = '<div class="empty-state">文件不存在。</div>';
     return;
   }
+  if (payload.key === "eval_result") {
+    const topConfusions = (object.quality?.top_confusions || [])
+      .map(
+        (item) =>
+          `<tr><td>${escapeHtml(item.expected)}</td><td>${escapeHtml(item.predicted)}</td><td>${escapeHtml(
+            String(item.count)
+          )}</td></tr>`
+      )
+      .join("");
+    const promptfooSummary = object.promptfoo?.summary || {};
+    artifactStructuredViewEl.innerHTML = `
+      <section class="artifact-object-block">
+        <h3>Dataset</h3>
+        <div class="artifact-key-grid">
+          <div class="artifact-key-value"><div><strong>sample_count</strong><span>${escapeHtml(
+            formatArtifactValue(object.dataset?.sample_count)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>hard_case_sample_count</strong><span>${escapeHtml(
+            formatArtifactValue(object.dataset?.hard_case_sample_count)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>no_visible_report_sample_count</strong><span>${escapeHtml(
+            formatArtifactValue(object.dataset?.no_visible_report_sample_count)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>label_distribution</strong><span>${escapeHtml(
+            formatArtifactValue(object.dataset?.label_distribution)
+          )}</span></div></div>
+        </div>
+      </section>
+      <section class="artifact-object-block">
+        <h3>Metrics</h3>
+        <div class="artifact-key-grid">
+          <div class="artifact-key-value"><div><strong>overall_accuracy</strong><span>${escapeHtml(
+            formatArtifactValue(object.metrics?.overall_accuracy)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>macro_f1</strong><span>${escapeHtml(
+            formatArtifactValue(object.metrics?.macro_f1)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>json_valid_rate</strong><span>${escapeHtml(
+            formatArtifactValue(object.metrics?.json_valid_rate)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>hard_cases_accuracy</strong><span>${escapeHtml(
+            formatArtifactValue(object.metrics?.hard_cases_accuracy)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>has_visible_report_false_accuracy</strong><span>${escapeHtml(
+            formatArtifactValue(object.metrics?.has_visible_report_false_accuracy)
+          )}</span></div></div>
+        </div>
+      </section>
+      <section class="artifact-object-block">
+        <h3>Quality</h3>
+        <div class="artifact-key-grid">
+          <div class="artifact-key-value"><div><strong>mismatch_count</strong><span>${escapeHtml(
+            formatArtifactValue(object.quality?.mismatch_count)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>parse_failure_count</strong><span>${escapeHtml(
+            formatArtifactValue(object.quality?.parse_failure_count)
+          )}</span></div></div>
+        </div>
+        ${
+          topConfusions
+            ? `
+              <div class="artifact-table-wrapper">
+                <table class="artifact-table">
+                  <thead>
+                    <tr><th>expected</th><th>predicted</th><th>count</th></tr>
+                  </thead>
+                  <tbody>${topConfusions}</tbody>
+                </table>
+              </div>
+            `
+            : '<div class="empty-state">当前没有非对角混淆样本。</div>'
+        }
+      </section>
+      <section class="artifact-object-block">
+        <h3>Promptfoo</h3>
+        <div class="artifact-key-grid">
+          <div class="artifact-key-value"><div><strong>status</strong><span>${escapeHtml(
+            formatArtifactValue(object.promptfoo?.status)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>pass_rate</strong><span>${escapeHtml(
+            formatArtifactValue(promptfooSummary.pass_rate)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>total_tests</strong><span>${escapeHtml(
+            formatArtifactValue(promptfooSummary.total_tests)
+          )}</span></div></div>
+          <div class="artifact-key-value"><div><strong>results_path</strong><span>${escapeHtml(
+            formatArtifactValue(object.promptfoo?.results_path)
+          )}</span></div></div>
+        </div>
+      </section>
+    `;
+    return;
+  }
   const entries = Object.entries(object);
   artifactStructuredViewEl.innerHTML = `
     <div class="artifact-object-block">
@@ -1951,11 +2303,11 @@ function renderTasks() {
           <span>${escapeHtml(task.theme || "未设置主题")}</span>
           <div class="task-item-meta">
             <span>${escapeHtml(task.task_type || "task")}</span>
-            <span>${escapeHtml(`${task.run_count || 0} runs`)}</span>
+            <span>${escapeHtml(task.language || "zh")}</span>
           </div>
           <div class="task-item-foot">
-            <span>${escapeHtml(`latest: ${task.latest_run_id || "无"}`)}</span>
-            <span>${escapeHtml(task.latest_status || "未开始")}</span>
+            <span>${escapeHtml(`${task.labels?.length || 0} labels`)}</span>
+            <span>${escapeHtml(`${task.run_count || 0} runs`)}</span>
           </div>
         </button>
       `
@@ -1978,7 +2330,7 @@ function renderRuns() {
   }
 
   if (!state.runs.length) {
-    runListEl.innerHTML = '<div class="empty-state">当前 task 还没有 run。先执行 generate 或 run-all。</div>';
+    runListEl.innerHTML = '<div class="empty-state">当前 task 还没有 run。切到“任务定义”页执行 generate 或 run-all。</div>';
     return;
   }
 
@@ -2023,6 +2375,7 @@ function renderRuns() {
 }
 
 function renderSummary() {
+  const taskScopedView = state.activeTab === "task-spec";
   if (!state.selectedTask) {
     workspaceTitleEl.textContent = "选择 task";
     workspaceSubtitleEl.textContent = "左侧选择一个 task，工作台会自动加载运行历史、关键产物与人工复核入口。";
@@ -2039,13 +2392,15 @@ function renderSummary() {
 
   workspaceTitleEl.textContent = state.selectedTask.name;
   workspaceSubtitleEl.textContent =
-    "围绕一个 run 完成生成、打标、过滤、复核、gold 构建与评测，首屏直接暴露当前进度与下一步。";
+    taskScopedView
+      ? "这是 task 的卷宗页，用来定义标签体系、scenario、prompts 与导出规则，并从这里启动新 run。"
+      : "这是 run 的执行页，只负责推进当前运行实例、检查阶段进度与处理后续动作。";
   taskNameValueEl.textContent = state.selectedTask.name;
   labelSummaryValueEl.textContent = state.selectedTask.labels.join(" / ") || "-";
 
-  if (!state.selectedRun) {
-    runIdValueEl.textContent = state.selectedTask.latest_run_id || "-";
-    runStatusValueEl.textContent = state.selectedTask.latest_status || "未开始";
+  if (!state.selectedRun || taskScopedView) {
+    runIdValueEl.textContent = taskScopedView ? "任务上下文" : "未选择";
+    runStatusValueEl.textContent = taskScopedView ? "任务视图" : "未选择 run";
     lastStageValueEl.textContent = "-";
     createdAtValueEl.textContent = "-";
     updatedAtValueEl.textContent = "-";
@@ -2177,16 +2532,53 @@ function renderArtifacts() {
 }
 
 function renderReviewSummary(summary = {}) {
+  const normalizedSummary = {
+    total: summary.total ?? state.reviewRecords.length,
+    pending:
+      summary.pending ??
+      state.reviewRecords.filter((record) => (record.review_decision || "pending") === "pending").length,
+    accepted: summary.accepted ?? state.reviewRecords.filter((record) => record.review_decision === "accepted").length,
+    corrected:
+      summary.corrected ?? state.reviewRecords.filter((record) => record.review_decision === "corrected").length,
+    rejected: summary.rejected ?? state.reviewRecords.filter((record) => record.review_decision === "rejected").length,
+  };
   const chips = [
-    ["总数", summary.total ?? 0],
-    ["待处理", summary.pending ?? 0],
-    ["接受", summary.accepted ?? 0],
-    ["纠正", summary.corrected ?? 0],
-    ["拒绝", summary.rejected ?? 0],
+    ["all", "总数", normalizedSummary.total],
+    ["pending", "待处理", normalizedSummary.pending],
+    ["accepted", "接受", normalizedSummary.accepted],
+    ["corrected", "纠正", normalizedSummary.corrected],
+    ["rejected", "拒绝", normalizedSummary.rejected],
   ];
   reviewSummaryEl.innerHTML = chips
-    .map(([label, value]) => `<span>${escapeHtml(label)}: ${escapeHtml(value)}</span>`)
+    .map(
+      ([filter, label, value]) => `
+        <button
+          class="review-summary-chip ${state.reviewFilter === filter ? "is-active" : ""}"
+          type="button"
+          data-review-filter="${escapeHtml(filter)}"
+          aria-pressed="${state.reviewFilter === filter ? "true" : "false"}"
+        >
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </button>
+      `
+    )
     .join("");
+
+  reviewSummaryEl.querySelectorAll("[data-review-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.reviewFilter = button.dataset.reviewFilter || "all";
+      renderReviewSummary();
+      renderReviews();
+    });
+  });
+}
+
+function reviewRecordMatchesFilter(record) {
+  if (state.reviewFilter === "all") {
+    return true;
+  }
+  return (record.review_decision || "pending") === state.reviewFilter;
 }
 
 function renderReviews() {
@@ -2203,8 +2595,21 @@ function renderReviews() {
     return;
   }
 
-  reviewListEl.innerHTML = state.reviewRecords
-    .map((record, index) => {
+  const filteredRecords = state.reviewRecords
+    .map((record, index) => ({ record, index }))
+    .filter(({ record }) => reviewRecordMatchesFilter(record));
+  if (!filteredRecords.length) {
+    const activeFilterLabel =
+      state.reviewFilter === "all"
+        ? "全部记录"
+        : REVIEW_DECISION_DETAILS[state.reviewFilter]?.display || state.reviewFilter;
+    reviewListEl.innerHTML = `<div class="empty-state">当前筛选“${escapeHtml(activeFilterLabel)}”下没有 review 记录。</div>`;
+    return;
+  }
+
+  const reviewCards = filteredRecords
+    .map(({ record, index }) => {
+      const selectedDecision = record.review_decision || "pending";
       const labelOptions = state.reviewLabels
         .map(
           (label) =>
@@ -2218,18 +2623,19 @@ function renderReviews() {
           <p>${escapeHtml(record.user_text)}</p>
           <div class="review-meta">
             <span>teacher: ${escapeHtml(record.teacher_label || "-")}</span>
-            <span>source: ${escapeHtml(record.review_decision || "pending")}</span>
+            <span>decision: ${escapeHtml(selectedDecision)}</span>
             <span>tags: ${escapeHtml((record.tags || []).join(", ") || "-")}</span>
           </div>
           <div class="review-grid">
-            <div class="review-field">
-              <label>Decision</label>
+            <div class="review-field review-field-full">
+              <div class="review-field-head">
+                <label>Decision</label>
+                <span class="review-field-hint">决定这条样本是否改标、拒绝，或进入后续 gold。</span>
+              </div>
               <select data-field="review_decision">
-                <option value="pending" ${record.review_decision === "pending" ? "selected" : ""}>pending</option>
-                <option value="accepted" ${record.review_decision === "accepted" ? "selected" : ""}>accepted</option>
-                <option value="corrected" ${record.review_decision === "corrected" ? "selected" : ""}>corrected</option>
-                <option value="rejected" ${record.review_decision === "rejected" ? "selected" : ""}>rejected</option>
+                ${renderReviewDecisionOptions(selectedDecision)}
               </select>
+              ${renderReviewDecisionGuide(selectedDecision)}
             </div>
             <div class="review-field">
               <label>Reviewer Label</label>
@@ -2237,24 +2643,30 @@ function renderReviews() {
                 <option value="">未设置</option>
                 ${labelOptions}
               </select>
+              <p class="review-field-hint"><code>accepted</code> 会自动回填 teacher_label；<code>corrected</code> 时这里必填。</p>
             </div>
             <div class="review-field">
               <label>Reviewed By</label>
               <input data-field="reviewed_by" type="text" value="${escapeHtml(record.reviewed_by || "")}" />
+              <p class="review-field-hint">留空时，保存会优先使用页面顶部的 Reviewer 名称。</p>
             </div>
             <div class="review-field">
               <label>Reviewed At</label>
               <input data-field="reviewed_at" type="text" value="${escapeHtml(record.reviewed_at || "")}" />
+              <p class="review-field-hint">留空时，保存会自动补当前时间。</p>
             </div>
             <div class="review-field review-field-full">
               <label>Comment</label>
               <textarea data-field="review_comment" rows="3">${escapeHtml(record.review_comment || "")}</textarea>
+              <p class="review-field-hint"><code>rejected</code> 时必填，建议写清样本问题或拒绝原因。</p>
             </div>
           </div>
         </article>
       `;
     })
     .join("");
+
+  reviewListEl.innerHTML = reviewCards;
 
   reviewListEl.querySelectorAll("[data-review-index]").forEach((container) => {
     const index = Number(container.dataset.reviewIndex);
@@ -2264,6 +2676,10 @@ function renderReviews() {
       });
       field.addEventListener("change", () => {
         state.reviewRecords[index][field.dataset.field] = field.value;
+        if (field.dataset.field === "review_decision") {
+          renderReviewSummary();
+          renderReviews();
+        }
       });
     });
   });
@@ -2405,7 +2821,7 @@ async function loadRuns() {
   state.selectedRunId =
     state.selectedRunId && state.runs.some((run) => run.run_id === state.selectedRunId)
       ? state.selectedRunId
-      : state.runs[0]?.run_id || null;
+      : null;
   renderRuns();
 
   if (state.selectedRunId) {
@@ -2442,17 +2858,22 @@ async function loadRunDetails(runId) {
   await loadReviewRecords();
 }
 
-async function selectTask(taskName) {
+async function selectTask(taskName, options = {}) {
+  const { preserveRunSelection = false, activateTaskTab = true } = options;
+  const previousRunId = preserveRunSelection ? state.selectedRunId : null;
   state.selectedTask = state.tasks.find((item) => item.name === taskName) || null;
   state.taskSpec = null;
   state.taskConfig = null;
   state.originalTaskConfig = null;
   state.isEditingTaskConfig = false;
   syncConfigDirty();
-  state.selectedRunId = null;
+  state.selectedRunId = previousRunId;
   state.selectedRun = null;
   state.selectedArtifactKey = null;
   state.reviewRecords = [];
+  if (activateTaskTab) {
+    setActiveTab("task-spec");
+  }
   renderTasks();
   renderSummary();
   renderTaskSpec();
@@ -2465,6 +2886,7 @@ async function selectRun(runId) {
     return;
   }
   await loadRunDetails(runId);
+  setActiveTab("run-control");
 }
 
 async function loadArtifact(artifactKey) {
@@ -2534,7 +2956,7 @@ async function loadReviewRecords() {
 }
 
 function setCommandLoading(command, isLoading) {
-  commandButtons.forEach((button) => {
+  allCommandButtons.forEach((button) => {
     const active = button.dataset.command === command && isLoading;
     button.classList.toggle("is-running", active);
     button.disabled = isLoading;
@@ -2566,7 +2988,7 @@ async function runCommand(command) {
     });
 
     await loadTasks();
-    await selectTask(state.selectedTask.name);
+    await selectTask(state.selectedTask.name, { activateTaskTab: false });
     if (payload.run_id) {
       await selectRun(payload.run_id);
     }
@@ -2638,6 +3060,9 @@ async function deleteRun(runId) {
     }
     await loadTasks();
     await loadRuns();
+    if (!state.selectedRunId) {
+      setActiveTab("task-spec");
+    }
     setMessage(`已删除 ${runId}`, "success");
   } catch (error) {
     setMessage(error.message, "error");
@@ -2687,9 +3112,10 @@ function cancelTaskConfigEditMode() {
 async function refreshAll() {
   setMessage("正在刷新工作台...");
   try {
+    const preserveRunSelection = !!state.selectedRunId;
     await loadTasks();
     if (state.selectedTask) {
-      await selectTask(state.selectedTask.name);
+      await selectTask(state.selectedTask.name, { preserveRunSelection, activateTaskTab: false });
     }
     setMessage("已刷新", "success");
   } catch (error) {
@@ -2828,7 +3254,7 @@ taskPromptEditorEl.addEventListener("input", (event) => {
   }, { rerenderEditors: false });
 });
 
-commandButtons.forEach((button) => {
+allCommandButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     await runCommand(button.dataset.command);
   });

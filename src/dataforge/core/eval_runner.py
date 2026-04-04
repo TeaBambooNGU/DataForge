@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable
 
+from dataforge.core.exporters import build_promptfoo_eval_rows
 from dataforge.core.io import read_yaml, write_json, write_jsonl, write_text, write_yaml
 
 
@@ -81,41 +82,148 @@ def evaluate_predictions(eval_rows: list[dict], hard_case_ids: set[str]) -> dict
 
 
 def export_promptfoo_eval(path: Path, eval_rows: list[dict[str, Any]]) -> None:
-    rows = []
-    for row in eval_rows:
-        rows.append(
-            {
-                "vars": {
-                    "id": row["id"],
-                    "input": row["user_text"],
-                    "expected": row["expected_label"],
-                    "predicted_label": row["predicted_label"],
-                    "predicted_json": json.dumps(
-                        {"action": row["predicted_label"]},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                },
-                "assert": [
-                    {"type": "is-json"},
-                    {
-                        "type": "javascript",
-                        "value": "JSON.parse(output).action === context.vars.expected",
-                    },
-                ],
-                "metadata": {
-                    "difficulty": row.get("difficulty"),
-                    "tags": row.get("tags", []),
-                    "has_visible_report": row.get("has_visible_report"),
-                    "parse_ok": row.get("parse_ok"),
-                },
-            }
-        )
-    write_jsonl(path, rows)
+    write_jsonl(path, build_promptfoo_eval_rows(eval_rows))
 
 
 def export_eval_predictions(path: Path, rows: list[dict]) -> None:
     write_jsonl(path, rows)
+
+
+def _extract_promptfoo_pass(result: Any) -> bool | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("pass", "success"):
+        value = result.get(key)
+        if isinstance(value, bool):
+            return value
+    grading_result = result.get("gradingResult")
+    if isinstance(grading_result, dict):
+        value = grading_result.get("pass")
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def summarize_promptfoo_results(result_payload: Any) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "pass_rate": None,
+        "total_tests": 0,
+        "passed_tests": 0,
+        "failed_tests": 0,
+    }
+    if not isinstance(result_payload, dict):
+        return summary
+
+    raw_summary = result_payload.get("summary")
+    if isinstance(raw_summary, dict):
+        for source_key, target_key in (
+            ("passRate", "pass_rate"),
+            ("totalTests", "total_tests"),
+            ("passedTests", "passed_tests"),
+            ("failedTests", "failed_tests"),
+        ):
+            value = raw_summary.get(source_key)
+            if isinstance(value, (int, float)):
+                summary[target_key] = value
+
+    results = result_payload.get("results")
+    if isinstance(results, list):
+        passed = 0
+        failed = 0
+        for result in results:
+            passed_flag = _extract_promptfoo_pass(result)
+            if passed_flag is True:
+                passed += 1
+            elif passed_flag is False:
+                failed += 1
+        total = len(results)
+        if not summary["total_tests"]:
+            summary["total_tests"] = total
+        if not summary["passed_tests"]:
+            summary["passed_tests"] = passed
+        if not summary["failed_tests"]:
+            summary["failed_tests"] = failed
+        if summary["pass_rate"] is None and total:
+            summary["pass_rate"] = round(passed / total, 4)
+
+    return summary
+
+
+def _top_confusions(confusion_matrix: dict[str, dict[str, int]], *, limit: int = 5) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+    for expected, predicted_counts in confusion_matrix.items():
+        for predicted, count in predicted_counts.items():
+            if expected == predicted or count <= 0:
+                continue
+            pairs.append({"expected": expected, "predicted": predicted, "count": count})
+    return sorted(
+        pairs,
+        key=lambda item: (-item["count"], item["expected"], item["predicted"]),
+    )[:limit]
+
+
+def build_eval_result(
+    eval_rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    hard_case_ids: set[str],
+    *,
+    promptfoo_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    mismatch_count = sum(1 for row in eval_rows if row.get("expected_label") != row.get("predicted_label"))
+    parse_failure_count = sum(1 for row in eval_rows if row.get("parse_ok") is False)
+    label_distribution = Counter(row["expected_label"] for row in eval_rows)
+    hard_case_total = sum(1 for row in eval_rows if row["id"] in hard_case_ids)
+    no_visible_total = sum(1 for row in eval_rows if row.get("has_visible_report") is False)
+    promptfoo_result = None
+    if promptfoo_summary is not None:
+        promptfoo_result = {
+            "status": promptfoo_summary.get("status", "unknown"),
+            "results_path": promptfoo_summary.get("results_path"),
+            "command": promptfoo_summary.get("command", []),
+            "stdout": promptfoo_summary.get("stdout", ""),
+            "stderr": promptfoo_summary.get("stderr", ""),
+            "summary": summarize_promptfoo_results(
+                {
+                    "summary": promptfoo_summary.get("summary"),
+                    "results": promptfoo_summary.get("results"),
+                }
+            ),
+        }
+
+    return {
+        "dataset": {
+            "sample_count": len(eval_rows),
+            "hard_case_sample_count": hard_case_total,
+            "no_visible_report_sample_count": no_visible_total,
+            "label_distribution": dict(sorted(label_distribution.items())),
+        },
+        "metrics": metrics,
+        "quality": {
+            "mismatch_count": mismatch_count,
+            "parse_failure_count": parse_failure_count,
+            "top_confusions": _top_confusions(metrics["confusion_matrix"]),
+        },
+        "promptfoo": promptfoo_result,
+    }
+
+
+def build_eval_manifest_summary(eval_result: dict[str, Any]) -> dict[str, Any]:
+    metrics = eval_result.get("metrics", {})
+    quality = eval_result.get("quality", {})
+    promptfoo = eval_result.get("promptfoo") or {}
+    promptfoo_metrics = promptfoo.get("summary") or {}
+    return {
+        "sample_count": eval_result.get("dataset", {}).get("sample_count", 0),
+        "overall_accuracy": metrics.get("overall_accuracy", 0.0),
+        "macro_f1": metrics.get("macro_f1", 0.0),
+        "json_valid_rate": metrics.get("json_valid_rate", 0.0),
+        "hard_cases_accuracy": metrics.get("hard_cases_accuracy", 0.0),
+        "has_visible_report_false_accuracy": metrics.get("has_visible_report_false_accuracy", 0.0),
+        "mismatch_count": quality.get("mismatch_count", 0),
+        "parse_failure_count": quality.get("parse_failure_count", 0),
+        "promptfoo_status": promptfoo.get("status"),
+        "promptfoo_pass_rate": promptfoo_metrics.get("pass_rate"),
+    }
 
 
 def build_promptfoo_runtime_config(
@@ -186,6 +294,7 @@ def run_promptfoo_eval(
         for key in ("results", "summary", "stats"):
             if key in result_payload:
                 summary[key] = result_payload[key]
+        summary["results_overview"] = summarize_promptfoo_results(result_payload)
     return summary
 
 
@@ -194,6 +303,7 @@ def write_eval_reports(
     confusion_path: Path,
     metrics: dict[str, Any],
     *,
+    eval_result: dict[str, Any] | None = None,
     promptfoo_summary: dict[str, Any] | None = None,
 ) -> None:
     summary_lines = [
@@ -213,6 +323,7 @@ def write_eval_reports(
         )
 
     if promptfoo_summary is not None:
+        promptfoo_overview = (eval_result or {}).get("promptfoo", {}).get("summary", {})
         summary_lines.extend(
             [
                 "",
@@ -230,10 +341,22 @@ def write_eval_reports(
             summary_lines.append(f"- Promptfoo summary: {promptfoo_summary['summary']}")
         if "stats" in promptfoo_summary:
             summary_lines.append(f"- Promptfoo stats: {promptfoo_summary['stats']}")
+        if promptfoo_overview.get("pass_rate") is not None:
+            summary_lines.append(f"- Promptfoo pass rate: {promptfoo_overview['pass_rate']:.4f}")
+        if promptfoo_overview.get("total_tests"):
+            summary_lines.append(f"- Promptfoo total tests: {promptfoo_overview['total_tests']}")
 
     confusion_lines = ["# Confusion Analysis", "", "## Matrix"]
     for expected, predicted_counts in metrics["confusion_matrix"].items():
         confusion_lines.append(f"- expected={expected}: {predicted_counts}")
+    if eval_result is not None:
+        top_confusions = eval_result.get("quality", {}).get("top_confusions", [])
+        if top_confusions:
+            confusion_lines.extend(["", "## Top Confusions"])
+            for item in top_confusions:
+                confusion_lines.append(
+                    f"- expected={item['expected']} predicted={item['predicted']} count={item['count']}"
+                )
 
     write_text(summary_path, "\n".join(summary_lines) + "\n")
     write_text(confusion_path, "\n".join(confusion_lines) + "\n")

@@ -1,9 +1,8 @@
 from pathlib import Path
 
-from dataforge.core.io import write_json
-from dataforge.core.io import read_jsonl, write_jsonl
+from dataforge.core.io import read_json, read_jsonl, write_json, write_jsonl
 from dataforge.core.registry import create_task_run, load_task_config
-from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, validate_review
+from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, student_export, validate_review
 
 
 def test_pipeline_smoke(tmp_path: Path, monkeypatch) -> None:
@@ -32,6 +31,7 @@ def test_pipeline_smoke(tmp_path: Path, monkeypatch) -> None:
     labeled_path = classify.run(run, input_path=raw_path)
 
     outputs = filter_export.run(run, input_path=labeled_path)
+    student_outputs = student_export.run(run)
     review_export_path = review_export.run(run, review_source=Path(outputs["review_import"]))
     review_rows = read_jsonl(review_export_path)
 
@@ -65,18 +65,41 @@ def test_pipeline_smoke(tmp_path: Path, monkeypatch) -> None:
     write_jsonl(run.path_for("review_results"), review_results)
 
     review_validation = validate_review.run(run)
-    build_gold.run(run)
+    build_gold_outputs = build_gold.run(run)
     eval_outputs = eval_pipeline.run(run)
     gold_samples = read_jsonl(run.path_for("gold_eval"))
+    hard_cases = read_jsonl(run.path_for("hard_cases"))
 
     assert Path(outputs["filtered_train"]).exists()
+    assert Path(outputs["train_export"]).exists()
+    assert Path(outputs["train_export_metadata"]).exists()
+    assert Path(student_outputs["student_train"]).exists()
+    assert Path(student_outputs["training_metadata"]).exists()
     assert run.path_for("gold_eval").exists()
+    assert Path(build_gold_outputs["hard_cases_metadata"]).exists()
+    assert Path(eval_outputs["eval_export_metadata"]).exists()
     assert Path(review_validation["review_validation_report"]).exists()
+    assert Path(eval_outputs["eval_export"]).exists()
     assert Path(eval_outputs["eval_summary"]).exists()
+    assert Path(eval_outputs["eval_result"]).exists()
     assert Path(eval_outputs["promptfoo_config"]).exists()
     assert Path(eval_outputs["promptfoo_results"]).exists()
     assert gold_samples
     assert len({sample["id"] for sample in gold_samples}) == len(gold_samples)
+    eval_result = read_json(run.path_for("eval_result"))
+    train_export_metadata = read_json(run.path_for("train_export_metadata"))
+    hard_cases_metadata = read_json(run.path_for("hard_cases_metadata"))
+    index_payload = read_json(run.index_path)
+    run_entry = next(entry for entry in index_payload["runs"] if entry["run_id"] == run.run_id)
+    assert eval_result["dataset"]["sample_count"] == len(gold_samples)
+    assert eval_result["version"]["dataset_name"] == "eval-export"
+    assert train_export_metadata["dataset_name"] == "train-export"
+    assert hard_cases_metadata["dataset_name"] == "hard-cases"
+    assert run_entry["stages"]["eval"]["summary"]["sample_count"] == len(gold_samples)
+    assert run_entry["stages"]["eval"]["summary"]["promptfoo_status"] == "ok"
+    for sample in hard_cases:
+        assert sample["metadata"]["hard_case_reason"]
+        assert sample["metadata"]["hard_case_recorded_at"]
     if review_rows:
         target_sample = next(sample for sample in gold_samples if sample["id"] == review_rows[0]["sample_id"])
         assert target_sample["annotation"]["final_label"] == final_label

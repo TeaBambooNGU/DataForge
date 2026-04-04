@@ -12,6 +12,7 @@ Current MVP scope:
 - local FastAPI + static web workbench for inspection and editing
 - human review to gold-set workflow
 - Promptfoo-backed offline evaluation
+- configurable train/eval export layer and student training bundle export
 
 The first built-in task is `report-intent-distill`, a 3-class intent classification workflow for:
 
@@ -21,12 +22,15 @@ The first built-in task is `report-intent-distill`, a 3-class intent classificat
 
 ## Features
 
-- Unified pipeline stages: `generate`, `classify`, `filter-export`, `review-export`, `validate-review`, `build-gold`, `eval`
+- Unified pipeline stages: `generate`, `classify`, `filter-export`, `review-export`, `validate-review`, `build-gold`, `eval`, `student-export`
 - Task-isolated configuration under `tasks/<task>/configs/`
 - Run-isolated artifacts, manifests, and status tracking
 - Provider abstraction for `mock`, `openai_compatible`, `anthropic_compatible`, and `minimax`
 - Human review records with multi-review merge support before gold freezing
-- Promptfoo test export, run-scoped Promptfoo config rendering, and result capture
+- Promptfoo test export, run-scoped Promptfoo config rendering, result capture, and structured `eval_result.json`
+- Config-driven `train_format` / `eval_format` export rendering plus version metadata files
+- Cross-run leakage blocking against historical `gold / eval / hard_cases`
+- Standard `student-export` bundle under `training/`
 - Local browser workbench for task config editing, artifact browsing, review editing, and run management
 
 ## Status
@@ -39,13 +43,15 @@ What is already in place:
 - first task integration
 - review to gold workflow
 - local Promptfoo execution path
+- structured eval replay summary
+- generalized export layer
+- student training output bundle
+- cross-version leakage guardrails
 
 What is still evolving:
 
-- richer eval result summaries
-- generalized export layer
-- student training output integration
 - broader multi-task support
+- real-data quality validation at scale
 
 ## Quick Start
 
@@ -87,6 +93,7 @@ Complete the review and evaluation stages:
 uv run dataforge validate-review --task report-intent-distill
 uv run dataforge build-gold --task report-intent-distill
 uv run dataforge eval --task report-intent-distill
+uv run dataforge student-export --task report-intent-distill
 ```
 
 ### Start The Local Workbench
@@ -115,6 +122,7 @@ uv run dataforge review-export --task report-intent-distill
 uv run dataforge validate-review --task report-intent-distill
 uv run dataforge build-gold --task report-intent-distill
 uv run dataforge eval --task report-intent-distill
+uv run dataforge student-export --task report-intent-distill
 uv run dataforge run-all --task report-intent-distill
 ```
 
@@ -124,6 +132,7 @@ Behavior:
 - other commands reuse `tasks/<task>/runs/latest.json` by default
 - all stage outputs are indexed in `tasks/<task>/runs/index.json`
 - each run tracks a monotonic status such as `generated`, `classified`, `gold_built`, and `evaluated`
+- `student-export` writes a standard training bundle under `tasks/<task>/runs/<run_id>/training/`
 
 Example:
 
@@ -131,6 +140,7 @@ Example:
 uv run dataforge run-all --task report-intent-distill
 uv run dataforge classify --task report-intent-distill --run-id run-20260327T161558Z
 uv run dataforge eval --task report-intent-distill --run-id run-20260327T161558Z
+uv run dataforge student-export --task report-intent-distill --run-id run-20260327T161558Z
 ```
 
 ## Pipeline Overview
@@ -151,11 +161,12 @@ Stage outputs:
 
 - `generate`: `raw/raw_candidates.jsonl`
 - `classify`: `raw/teacher_labeled.jsonl`
-- `filter-export`: filtered train set, rejected samples, review pool, Promptfoo test export
+- `filter-export`: filtered train set, configurable train export, train export metadata, rejected samples, review pool, Promptfoo placeholder export
 - `review-export`: `processed/review_candidates.jsonl`
 - `validate-review`: `reports/review_validation.md`
-- `build-gold`: `gold/gold_eval.jsonl`, `gold/hard_cases.jsonl`
-- `eval`: predictions, Promptfoo config, Promptfoo results, eval summary, confusion analysis
+- `build-gold`: `gold/gold_eval.jsonl`, `gold/hard_cases.jsonl`, `gold/hard_cases_metadata.json`
+- `eval`: configurable eval export, eval export metadata, predictions, structured eval result, Promptfoo config, Promptfoo results, eval summary, confusion analysis
+- `student-export`: `training/student_train.jsonl`, `training/metadata.json`
 
 ## Run Layout
 
@@ -173,6 +184,7 @@ tasks/report-intent-distill/runs/<run_id>/
   processed/
   gold/
   exports/
+  training/
   reports/
 ```
 
@@ -181,8 +193,12 @@ Important files:
 - `runs/latest.json`: pointer to the default run for follow-up stages
 - `runs/index.json`: run index and stage summaries
 - `reports/manifests/<stage>.json`: per-stage execution metadata
+- `exports/train_dataset_metadata.json`: train export version summary and leakage blocking summary
+- `exports/eval_dataset_metadata.json`: eval export version summary
 - `reports/promptfoo/config.yaml`: run-scoped Promptfoo config rendered by DataForge
 - `reports/promptfoo/results.json`: raw Promptfoo evaluation result
+- `reports/eval_result.json`: structured eval replay summary
+- `training/metadata.json`: standard student training bundle metadata
 
 ## Project Structure
 
@@ -243,6 +259,7 @@ The pipeline uses these files to decide:
 - how generation scenarios are constructed
 - which business rules apply during filtering
 - how Promptfoo evaluation is rendered and executed
+- which train/eval/student export formats are rendered
 
 ## Providers
 

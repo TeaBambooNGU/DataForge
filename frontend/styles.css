@@ -393,6 +393,127 @@ code {
   background: rgba(255, 252, 247, 0.72);
 }
 
+.task-spec-panel {
+  background:
+    radial-gradient(circle at top right, rgba(181, 90, 52, 0.16), transparent 24%),
+    linear-gradient(180deg, rgba(255, 248, 241, 0.94), rgba(245, 236, 224, 0.88));
+}
+
+.task-dossier-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  gap: 1rem;
+  margin-top: 1rem;
+  align-items: stretch;
+}
+
+.task-dossier-hero {
+  position: relative;
+  padding: 1.35rem;
+  border: 1px solid rgba(90, 47, 24, 0.18);
+  border-radius: 28px;
+  background:
+    linear-gradient(135deg, rgba(48, 31, 23, 0.96), rgba(104, 63, 44, 0.9)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  color: #f7ecdc;
+  overflow: hidden;
+  box-shadow: 0 28px 60px rgba(70, 42, 23, 0.18);
+}
+
+.task-dossier-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+.task-dossier-ribbon {
+  position: absolute;
+  top: 1rem;
+  right: -2.1rem;
+  padding: 0.28rem 2.8rem;
+  background: linear-gradient(90deg, rgba(250, 206, 163, 0.92), rgba(255, 239, 218, 0.9));
+  color: #402516;
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 0.86rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transform: rotate(28deg);
+}
+
+.task-dossier-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 1rem;
+  align-items: end;
+}
+
+.task-dossier-eyebrow {
+  margin: 0;
+  color: rgba(255, 232, 201, 0.72);
+  letter-spacing: 0.24em;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.task-dossier-title {
+  margin: 0.55rem 0 0;
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: clamp(2.3rem, 4.8vw, 4.6rem);
+  line-height: 0.9;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.task-dossier-copy {
+  max-width: 38rem;
+  margin: 1rem 0 0;
+  color: rgba(255, 236, 214, 0.8);
+  line-height: 1.75;
+}
+
+.task-dossier-matrix {
+  position: relative;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.task-dossier-matrix span {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(255, 230, 199, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 246, 234, 0.08);
+  color: #fff1de;
+}
+
+.task-dossier-matrix strong {
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 229, 194, 0.56);
+}
+
+.task-dossier-foot {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(255, 231, 202, 0.12);
+  color: rgba(255, 232, 201, 0.7);
+  font-size: 0.88rem;
+}
+
 .task-spec-grid,
 .task-runtime-grid,
 .task-scenario-grid,
@@ -430,6 +551,27 @@ code {
 .task-spec-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.task-actions-block {
+  background:
+    linear-gradient(180deg, rgba(255, 251, 245, 0.84), rgba(244, 233, 218, 0.78)),
+    rgba(255, 251, 245, 0.82);
+}
+
+.task-actions-block .command-grid {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 1080px) {
+  .task-dossier-top,
+  .run-control-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .task-dossier-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .task-config-toolbar {
@@ -1445,6 +1587,13 @@ code {
   gap: 0.35rem;
 }
 
+.review-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .review-field-full {
   grid-column: 1 / -1;
 }
@@ -1452,6 +1601,56 @@ code {
 .review-field label {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.review-field-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.review-decision-active-note {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.55rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(19, 19, 19, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 252, 247, 0.88);
+}
+
+.review-decision-active-note {
+  border-color: rgba(173, 74, 48, 0.18);
+  background: rgba(173, 74, 48, 0.06);
+}
+
+.review-decision-active-note .review-decision-item-head strong {
+  color: var(--text);
+}
+
+.review-decision-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.review-decision-item-head strong {
+  font-size: 0.88rem;
+}
+
+.review-decision-item-head span,
+.review-decision-item-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.review-decision-active-note p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
 }
 
 .review-meta {
@@ -2081,11 +2280,41 @@ code {
   font-size: 1.65rem;
 }
 
+.control-sections {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.control-section {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.control-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.control-section-head h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1.15rem;
+}
+
+.control-section-head > span {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  text-align: right;
+}
+
 .pipeline-overview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
-  margin-top: 1rem;
 }
 
 .pipeline-stage-card {
@@ -2185,7 +2414,14 @@ code {
 .command-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
-  margin-top: 1rem;
+}
+
+.task-action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.run-command-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .command-button {
@@ -2395,11 +2631,46 @@ code {
   gap: 0.7rem;
 }
 
-.review-summary span {
-  padding: 0.48rem 0.68rem;
+.review-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.48rem 0.82rem;
   border-radius: 999px;
   border: 1px solid rgba(19, 19, 19, 0.08);
   background: rgba(255, 251, 244, 0.82);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.review-summary-chip span {
+  color: var(--muted);
+}
+
+.review-summary-chip strong {
+  font-size: 0.95rem;
+}
+
+.review-summary-chip:hover,
+.review-summary-chip:focus-visible,
+.review-summary-chip.is-active {
+  transform: translateY(-1px);
+  border-color: rgba(181, 90, 52, 0.28);
+  background: rgba(181, 90, 52, 0.12);
+}
+
+.review-summary-chip:focus-visible {
+  outline: 2px solid rgba(181, 90, 52, 0.2);
+  outline-offset: 2px;
+}
+
+.review-summary-chip.is-active {
+  color: var(--accent-strong);
+}
+
+.review-summary-chip.is-active span {
+  color: inherit;
 }
 
 .ghost-button,

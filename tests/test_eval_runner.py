@@ -1,7 +1,14 @@
 import subprocess
 from pathlib import Path
 
-from dataforge.core.eval_runner import build_promptfoo_runtime_config, export_promptfoo_eval, run_promptfoo_eval
+from dataforge.core.eval_runner import (
+    build_eval_manifest_summary,
+    build_eval_result,
+    build_promptfoo_runtime_config,
+    export_promptfoo_eval,
+    run_promptfoo_eval,
+    summarize_promptfoo_results,
+)
 from dataforge.core.io import read_jsonl, read_yaml, write_json, write_yaml
 
 
@@ -74,3 +81,71 @@ def test_run_promptfoo_eval_uses_runner_and_reads_results(tmp_path: Path) -> Non
     assert summary["status"] == "ok"
     assert summary["summary"] == {"passRate": 1.0}
     assert summary["stdout"] == "promptfoo ok"
+    assert summary["results_overview"]["pass_rate"] == 1.0
+
+
+def test_build_eval_result_produces_structured_summary() -> None:
+    eval_rows = [
+        {
+            "id": "sample-1",
+            "expected_label": "chat",
+            "predicted_label": "chat",
+            "parse_ok": True,
+            "has_visible_report": False,
+        },
+        {
+            "id": "sample-2",
+            "expected_label": "rewrite_report",
+            "predicted_label": "chat",
+            "parse_ok": False,
+            "has_visible_report": True,
+        },
+    ]
+    metrics = {
+        "overall_accuracy": 0.5,
+        "macro_f1": 0.3333,
+        "json_valid_rate": 0.5,
+        "hard_cases_accuracy": 0.0,
+        "has_visible_report_false_accuracy": 1.0,
+        "per_class": {},
+        "confusion_matrix": {
+            "chat": {"chat": 1},
+            "rewrite_report": {"chat": 1},
+        },
+    }
+    promptfoo_summary = {
+        "status": "ok",
+        "results_path": "/tmp/results.json",
+        "command": ["promptfoo", "eval"],
+        "stdout": "",
+        "stderr": "",
+        "summary": {"passRate": 0.5},
+        "results": [{"success": True}, {"success": False}],
+    }
+
+    eval_result = build_eval_result(eval_rows, metrics, {"sample-2"}, promptfoo_summary=promptfoo_summary)
+    manifest_summary = build_eval_manifest_summary(eval_result)
+
+    assert eval_result["dataset"]["sample_count"] == 2
+    assert eval_result["quality"]["mismatch_count"] == 1
+    assert eval_result["quality"]["parse_failure_count"] == 1
+    assert eval_result["quality"]["top_confusions"] == [{"expected": "rewrite_report", "predicted": "chat", "count": 1}]
+    assert eval_result["promptfoo"]["summary"]["pass_rate"] == 0.5
+    assert manifest_summary["sample_count"] == 2
+    assert manifest_summary["promptfoo_status"] == "ok"
+
+
+def test_summarize_promptfoo_results_reads_summary_and_results() -> None:
+    summary = summarize_promptfoo_results(
+        {
+            "summary": {"passRate": 0.75},
+            "results": [{"success": True}, {"success": True}, {"success": True}, {"success": False}],
+        }
+    )
+
+    assert summary == {
+        "pass_rate": 0.75,
+        "total_tests": 4,
+        "passed_tests": 3,
+        "failed_tests": 1,
+    }

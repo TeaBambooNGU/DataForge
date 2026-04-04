@@ -57,6 +57,7 @@ scenarios:
     language: zh
   templates:
   - 这版先留着，再按今天的新消息重跑一个版本
+  generation_count: 10
 - intent: rewrite_report
   difficulty: hard
   tags:
@@ -70,3 +71,4 @@ scenarios:
     language: zh
   templates:
   - 帮我改得更像正式汇报
+  generation_count: 10

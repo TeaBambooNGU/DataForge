@@ -1,6 +1,6 @@
 # DataForge MVP 开发清单
 
-- 更新时间: 2026-03-30
+- 更新时间: 2026-04-04
 - 基线文档:
   - [平台 MVP 设计](/Users/teabamboo/Documents/AIplusLLM/DataForge/docs/DataForge-platform-mvp-design.md)
   - [当前工程架构](/Users/teabamboo/Documents/AIplusLLM/DataForge/docs/architecture.md)
@@ -16,8 +16,8 @@
 
 - `Phase 1：平台骨架`：已完成
 - `Phase 2：首任务接入`：已完成
-- `Phase 3：人工抽检与评测`：部分完成
-- `Phase 4：训练出口`：未开始
+- `Phase 3：人工抽检与评测`：已完成工程闭环
+- `Phase 4：训练出口`：已完成工程实现，待真实数据验收
 
 ## 2. 已完成能力
 
@@ -67,10 +67,9 @@
   - 当前状态：`eval` 阶段会导出 Promptfoo tests、生成运行时 config、执行 `promptfoo eval` 并回收结果
   - 当前约束：默认通过 `npx --yes promptfoo@latest` 调用；若运行环境缺少 Node / 网络或任务配置不合法，Promptfoo 阶段会失败
 
-- [ ] review 历史记录已保存，但 gold merge 规则未完整实现
-  - 当前状态：`review_history` 会写入样本
-  - 当前缺口：`build_gold` 仍按 review 记录逐条处理，没有先按 `sample_id` 聚合并取最后一次有效人工结论
-  - 风险：同一样本多轮 review 时，可能重复进入 gold，或不符合设计中的 merge 规则
+- [x] review 历史记录与 gold merge 规则已实现
+  - 当前状态：`build_gold` 会先按 `sample_id` 聚合多轮 review，并取最后一次有效人工结论构建 gold
+  - 当前补充：`review_history` 会保留在样本 annotation 中，gold 中不会重复出同一 `sample_id`
 
 - [x] 评测报告已接入 Promptfoo 运行状态
   - 当前状态：`eval_summary.md` 会追加 Promptfoo 执行状态与结果路径
@@ -80,18 +79,18 @@
 
 ### 4.1 Phase 4 训练出口
 
-- [ ] 抽象统一训练格式导出层
-- [ ] 真正消费 `exports.train_format` 配置，而不是固定写 `filtered_train.jsonl`
-- [ ] 真正消费 `exports.eval_format` 配置，而不是固定写 promptfoo 风格 jsonl
-- [ ] 增加 student 训练入口或标准训练数据出口
-- [ ] 增加训练版本说明与产物目录约定
-- [ ] 定义 hard cases 回流训练时的版本管理规则
+- [x] 抽象统一训练格式导出层
+- [x] 真正消费 `exports.train_format` 配置，而不是固定写 `filtered_train.jsonl`
+- [x] 真正消费 `exports.eval_format` 配置，而不是固定写 promptfoo 风格 jsonl
+- [x] 增加 student 训练入口或标准训练数据出口
+- [x] 增加训练版本说明与产物目录约定
+- [x] 定义 hard cases 回流训练时的版本管理规则
 
 ### 4.2 数据治理与防泄漏
 
-- [ ] 增量训练前，与历史 `gold / eval / hard_cases` 做跨版本去重
-- [ ] 为 train/eval/hard cases 生成更明确的数据版本摘要
-- [ ] 明确 hard cases 的来源原因与回流日期
+- [x] 增量训练前，与历史 `gold / eval / hard_cases` 做跨版本去重
+- [x] 为 train/eval/hard cases 生成更明确的数据版本摘要
+- [x] 明确 hard cases 的来源原因与回流日期
 
 ### 4.3 首任务质量验收
 
@@ -133,7 +132,7 @@
     - `accepted` / `corrected` / `rejected` 行为符合设计
     - gold 中不会因多轮 review 产生重复样本
 
-- [ ] 任务 3：补齐评测结果回写与 run 摘要
+- [x] 任务 3：补齐评测结果回写与 run 摘要
   - 目标：让 `eval` 真正成为“可回放、可追踪”的闭环阶段
   - 建议修改：
     - `src/dataforge/core/io.py`
@@ -146,7 +145,7 @@
 
 ### P1：再补 Phase 4 训练出口
 
-- [ ] 任务 4：抽象导出层
+- [x] 任务 4：抽象导出层
   - 目标：把训练集、评测集、student 训练格式导出做成可配置而非固定写死
   - 建议修改：
     - `src/dataforge/core/`
@@ -158,7 +157,7 @@
     - `exports.train_format` 与 `exports.eval_format` 被真实消费
     - 新增格式时不需要改动主流程大量代码
 
-- [ ] 任务 5：补 student 训练标准出口
+- [x] 任务 5：补 student 训练标准出口
   - 目标：先实现“标准训练产物出口”，再决定是否直接接训练执行器
   - 建议修改：
     - `src/dataforge/pipelines/`
@@ -171,7 +170,7 @@
 
 ### P2：最后做数据治理与质量验收
 
-- [ ] 任务 6：补跨版本防泄漏去重
+- [x] 任务 6：补跨版本防泄漏去重
   - 目标：增量样本进训练前，先与历史 gold/eval/hard cases 去重
   - 建议修改：
     - `src/dataforge/core/dedupe.py`
@@ -234,12 +233,13 @@
 
 ## 8. 下一步建议
 
-如果只选一个最值得优先做的任务，建议下一步做：
+下一步建议已经从“补工程能力”切换为“做真实数据验收”：
 
-- [ ] `P0 / 任务 3：补齐评测结果回写与 run 摘要`
+- [ ] 扩大样本规模到 3000 到 10000 条
+- [ ] 组织真实人工复核并统计一致率
+- [ ] 在真实 provider 和真实数据上验证关键指标
 
 原因：
 
-1. 多轮 review merge 和 Promptfoo 真执行链路都已补上，Phase 3 剩余缺口主要在结果摘要和回放信息不足。
-2. 这一步能把 Promptfoo 结果、eval 结果和 run manifest 进一步打通。
-3. 完成它之后，再推进训练出口会更稳，不容易返工。
+1. 代码闭环已经具备，下一阶段瓶颈不在工程实现，而在真实数据规模和评测质量。
+2. 质量线中的 `Macro F1`、`hard cases accuracy`、人工一致率都需要真实运行结果，不应靠静态代码勾选。

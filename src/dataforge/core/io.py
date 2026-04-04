@@ -77,6 +77,8 @@ def write_run_manifest(
     output_paths: list[str],
     stats: dict[str, Any] | None = None,
     errors: list[str] | None = None,
+    summary: dict[str, Any] | None = None,
+    details: dict[str, Any] | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
@@ -88,6 +90,8 @@ def write_run_manifest(
         "output_paths": output_paths,
         "stats": stats or {},
         "errors": errors or [],
+        "summary": summary or {},
+        "details": details or {},
         "completed_at": utc_now(),
     }
     write_json(manifest_path, payload)

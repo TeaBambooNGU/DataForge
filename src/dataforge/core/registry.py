@@ -38,8 +38,16 @@ RUN_ARTIFACT_PATHS = {
     "review_results": "processed/review_results.jsonl",
     "gold_eval": "gold/gold_eval.jsonl",
     "hard_cases": "gold/hard_cases.jsonl",
+    "train_export": "exports/train_dataset.jsonl",
+    "train_export_metadata": "exports/train_dataset_metadata.json",
+    "eval_export": "exports/eval_dataset.jsonl",
+    "eval_export_metadata": "exports/eval_dataset_metadata.json",
     "eval_for_promptfoo": "exports/eval_for_promptfoo.jsonl",
     "eval_predictions": "exports/eval_predictions.jsonl",
+    "student_train": "training/student_train.jsonl",
+    "training_metadata": "training/metadata.json",
+    "eval_result": "reports/eval_result.json",
+    "hard_cases_metadata": "gold/hard_cases_metadata.json",
     "promptfoo_config": "reports/promptfoo/config.yaml",
     "promptfoo_results": "reports/promptfoo/results.json",
     "eval_summary": "reports/eval_summary.md",
@@ -52,6 +60,7 @@ RUN_ARTIFACT_PATHS = {
     "review_validate_manifest": "reports/manifests/review_validate.json",
     "build_gold_manifest": "reports/manifests/build_gold.json",
     "eval_manifest": "reports/manifests/eval.json",
+    "student_export_manifest": "reports/manifests/student_export.json",
 }
 
 
@@ -228,6 +237,7 @@ class TaskRun:
                 "manifest_path": str(manifest_path),
                 "completed_at": manifest.get("completed_at"),
                 "stats": manifest.get("stats", {}),
+                "summary": manifest.get("summary", {}),
             }
             break
         write_json(self.index_path, index)

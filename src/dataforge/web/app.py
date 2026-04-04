@@ -13,9 +13,9 @@ from pydantic import BaseModel
 
 from dataforge.core.env import load_dotenv
 from dataforge.core.io import read_json, read_jsonl, read_text, read_yaml, utc_now, write_json, write_jsonl, write_text, write_yaml
-from dataforge.core.registry import RUN_ARTIFACT_PATHS, TaskConfig, TaskRun, discover_tasks, latest_run_id, load_task_config, resolve_task_run
+from dataforge.core.registry import RUN_ARTIFACT_PATHS, TaskConfig, TaskRun, discover_tasks, load_task_config, resolve_task_run
 from dataforge.core.review import summarize_review_records, utc_now as review_utc_now, validate_review_records
-from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, validate_review
+from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, student_export, validate_review
 
 
 COMMAND_HANDLERS = {
@@ -26,7 +26,10 @@ COMMAND_HANDLERS = {
     "validate-review": validate_review.run,
     "build-gold": build_gold.run,
     "eval": eval_pipeline.run,
+    "student-export": student_export.run,
 }
+NEW_RUN_COMMANDS = {"generate", "run-all"}
+SUPPORTED_COMMANDS = set(COMMAND_HANDLERS) | {"run-all"}
 
 
 class CommandRequest(BaseModel):
@@ -55,6 +58,14 @@ def _http_404(message: str) -> HTTPException:
 
 def _http_400(message: str) -> HTTPException:
     return HTTPException(status_code=400, detail=message)
+
+
+def _command_stage_key(command: str) -> str | None:
+    if command in NEW_RUN_COMMANDS:
+        return None
+    if command in COMMAND_HANDLERS:
+        return command.replace("-", "_")
+    return None
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -162,6 +173,7 @@ def _serialize_run(task: TaskConfig, entry: dict[str, Any]) -> dict[str, Any]:
         _serialize_artifact_meta(run, artifact_key, relative_path)
         for artifact_key, relative_path in RUN_ARTIFACT_PATHS.items()
     ]
+    eval_summary = entry.get("stages", {}).get("eval", {}).get("summary", {})
     return {
         "run_id": entry["run_id"],
         "status": entry.get("status"),
@@ -169,6 +181,7 @@ def _serialize_run(task: TaskConfig, entry: dict[str, Any]) -> dict[str, Any]:
         "updated_at": entry.get("updated_at"),
         "last_stage": entry.get("last_stage"),
         "stages": entry.get("stages", {}),
+        "evaluation": eval_summary or None,
         "run_root": str(run.run_root),
         "artifacts": artifacts,
     }
@@ -182,16 +195,12 @@ def _task_labels(task: TaskConfig) -> list[str]:
 def _serialize_task(project_root: Path, task_name: str) -> dict[str, Any]:
     task = _load_task(project_root, task_name)
     runs = _load_runs_index(task)
-    latest_id = latest_run_id(task)
-    latest_entry = next((entry for entry in runs if entry["run_id"] == latest_id), None)
     return {
         "name": task.name,
         "theme": task.config.get("theme"),
         "language": task.config.get("language"),
         "task_type": task.config.get("task_type"),
         "labels": _task_labels(task),
-        "latest_run_id": latest_id,
-        "latest_status": latest_entry.get("status") if latest_entry else None,
         "run_count": len(runs),
     }
 
@@ -468,6 +477,22 @@ def _run_command(command: str, task_run: TaskRun) -> Any:
     return COMMAND_HANDLERS[command](task_run)
 
 
+def _ensure_command_is_runnable(task: TaskConfig, command: str, task_run: TaskRun) -> None:
+    if command not in SUPPORTED_COMMANDS:
+        raise _http_404(f"Unsupported command: {command}")
+
+    stage_key = _command_stage_key(command)
+    if stage_key is None:
+        return
+
+    entry = _find_run_entry(task, task_run.run_id)
+    if stage_key in entry.get("stages", {}):
+        raise ValueError(
+            f"Command {command} has already been completed for run {task_run.run_id}. "
+            "Use generate or run-all to create a new run."
+        )
+
+
 def create_app(project_root: Path | None = None) -> FastAPI:
     resolved_root = (project_root or Path.cwd()).resolve()
     frontend_dir = resolved_root / "frontend"
@@ -544,7 +569,10 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def run_command(task_name: str, command: str, payload: CommandRequest) -> dict[str, Any]:
         task = _load_task(resolved_root, task_name)
         try:
+            if command not in SUPPORTED_COMMANDS:
+                raise _http_404(f"Unsupported command: {command}")
             task_run = resolve_task_run(task, command=command, run_id=payload.run_id)
+            _ensure_command_is_runnable(task, command, task_run)
             result = _run_command(command, task_run)
             entry = _find_run_entry(task, task_run.run_id)
         except FileNotFoundError as exc:

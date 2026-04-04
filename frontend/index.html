@@ -82,14 +82,14 @@
         </header>
 
         <nav class="workspace-tabs" aria-label="Workbench Tabs">
-          <button class="workspace-tab is-active" data-workbench-tab="run-control" type="button">运行控制</button>
-          <button class="workspace-tab" data-workbench-tab="task-spec" type="button">任务定义</button>
+          <button class="workspace-tab is-active" data-workbench-tab="task-spec" type="button">任务定义</button>
+          <button class="workspace-tab" data-workbench-tab="run-control" type="button">运行控制</button>
           <button class="workspace-tab" data-workbench-tab="artifacts" type="button">运行产物</button>
           <button class="workspace-tab" data-workbench-tab="review" type="button">人工复核</button>
         </nav>
 
         <div class="tab-panels">
-          <section class="panel tab-panel" data-workbench-panel="run-control">
+          <section class="panel tab-panel" data-workbench-panel="run-control" hidden>
             <div class="run-control-layout">
               <article class="run-control-block run-control-block-primary">
                 <div class="panel-heading">
@@ -103,75 +103,69 @@
                   </label>
                 </div>
 
-                <div class="pipeline-overview" id="pipelineOverview">
-                  <div class="empty-state">选择 task / run 后显示阶段进度与推荐顺序。</div>
-                </div>
+                <div class="control-section">
+                  <div class="control-section-head">
+                    <div>
+                      <p class="panel-kicker">Run Actions</p>
+                      <h3>推进当前 Run</h3>
+                    </div>
+                    <span>只对当前选中的 run 生效；已完成阶段会自动禁用。</span>
+                  </div>
 
-                <div class="command-grid" id="commandGrid">
-                  <button class="command-button" data-command="generate" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">01</span>
-                      <span class="command-state">new run</span>
-                    </div>
-                    <strong>generate</strong>
-                    <span>新建 run，并生成带有 label_hint 的候选样本</span>
-                  </button>
-                  <button class="command-button" data-command="classify" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">02</span>
-                      <span class="command-state">labeling</span>
-                    </div>
-                    <strong>classify</strong>
-                    <span>教师模型重新判定正式标签</span>
-                  </button>
-                  <button class="command-button" data-command="filter-export" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">03</span>
-                      <span class="command-state">filtering</span>
-                    </div>
-                    <strong>filter-export</strong>
-                    <span>过滤、去重、拆分训练集</span>
-                  </button>
-                  <button class="command-button" data-command="review-export" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">04</span>
-                      <span class="command-state">handoff</span>
-                    </div>
-                    <strong>review-export</strong>
-                    <span>导出人工复核模板</span>
-                  </button>
-                  <button class="command-button" data-command="validate-review" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">05</span>
-                      <span class="command-state">gate</span>
-                    </div>
-                    <strong>validate-review</strong>
-                    <span>校验人工复核结果</span>
-                  </button>
-                  <button class="command-button" data-command="build-gold" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">06</span>
-                      <span class="command-state">freeze</span>
-                    </div>
-                    <strong>build-gold</strong>
-                    <span>冻结 gold 与 hard cases</span>
-                  </button>
-                  <button class="command-button" data-command="eval" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">07</span>
-                      <span class="command-state">score</span>
-                    </div>
-                    <strong>eval</strong>
-                    <span>输出评测结果与报告</span>
-                  </button>
-                  <button class="command-button command-button-emphasis" data-command="run-all" type="button">
-                    <div class="command-button-top">
-                      <span class="command-step">Batch</span>
-                      <span class="command-state">first pass</span>
-                    </div>
-                    <strong>run-all</strong>
-                    <span>串行跑前四个阶段</span>
-                  </button>
+                  <div class="pipeline-overview" id="pipelineOverview">
+                    <div class="empty-state">选择 run 后显示阶段进度与推荐顺序。</div>
+                  </div>
+
+                  <div class="command-grid run-command-grid" id="runCommandGrid">
+                    <button class="command-button" data-command="classify" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">02</span>
+                        <span class="command-state">labeling</span>
+                      </div>
+                      <strong>classify</strong>
+                      <span>教师模型重新判定正式标签</span>
+                    </button>
+                    <button class="command-button" data-command="filter-export" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">03</span>
+                        <span class="command-state">filtering</span>
+                      </div>
+                      <strong>filter-export</strong>
+                      <span>过滤、去重、拆分训练集</span>
+                    </button>
+                    <button class="command-button" data-command="review-export" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">04</span>
+                        <span class="command-state">handoff</span>
+                      </div>
+                      <strong>review-export</strong>
+                      <span>导出人工复核模板</span>
+                    </button>
+                    <button class="command-button" data-command="validate-review" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">05</span>
+                        <span class="command-state">gate</span>
+                      </div>
+                      <strong>validate-review</strong>
+                      <span>校验人工复核结果</span>
+                    </button>
+                    <button class="command-button" data-command="build-gold" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">06</span>
+                        <span class="command-state">freeze</span>
+                      </div>
+                      <strong>build-gold</strong>
+                      <span>冻结 gold 与 hard cases</span>
+                    </button>
+                    <button class="command-button" data-command="eval" data-command-scope="run" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">07</span>
+                        <span class="command-state">score</span>
+                      </div>
+                      <strong>eval</strong>
+                      <span>输出评测结果与报告</span>
+                    </button>
+                  </div>
                 </div>
               </article>
 
@@ -247,6 +241,45 @@
             </div>
 
             <div class="task-spec-read-view" id="taskSpecReadView">
+              <div class="task-dossier-top">
+                <article class="task-dossier-hero" id="taskDossierHero">
+                  <div class="empty-state">选择 task 后显示任务卷宗。</div>
+                </article>
+
+                <article class="task-spec-block task-actions-block">
+                  <div class="control-section-head">
+                    <div>
+                      <p class="panel-kicker">Task Actions</p>
+                      <h3>新建 Run</h3>
+                    </div>
+                    <span>task 级入口只在本页出现；启动 run 后再切到“运行控制”。</span>
+                  </div>
+                  <div class="command-grid task-action-grid" id="taskActionGrid">
+                    <button class="command-button" data-command="generate" data-command-scope="task" type="button">
+                      <div class="command-button-top">
+                        <span class="command-step">01</span>
+                        <span class="command-state">new run</span>
+                      </div>
+                      <strong>generate</strong>
+                      <span>新建 run，并生成带有 label_hint 的候选样本</span>
+                    </button>
+                    <button
+                      class="command-button command-button-emphasis"
+                      data-command="run-all"
+                      data-command-scope="task"
+                      type="button"
+                    >
+                      <div class="command-button-top">
+                        <span class="command-step">Batch</span>
+                        <span class="command-state">first pass</span>
+                      </div>
+                      <strong>run-all</strong>
+                      <span>新建 run，并串行跑前四个阶段</span>
+                    </button>
+                  </div>
+                </article>
+              </div>
+
               <div class="task-spec-grid">
                 <article class="task-spec-block">
                   <h3>任务概览</h3>
