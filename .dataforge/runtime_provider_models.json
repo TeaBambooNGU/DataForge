@@ -1,0 +1,209 @@
+{
+  "providers": {
+    "mock": {
+      "generator": [
+        {
+          "value": "mock-generator-v1",
+          "label": "Mock Generator v1",
+          "recommended": true
+        }
+      ],
+      "teacher": [
+        {
+          "value": "mock-teacher-v1",
+          "label": "Mock Teacher v1",
+          "recommended": true
+        }
+      ],
+      "eval": [
+        {
+          "value": "mock-eval-v1",
+          "label": "Mock Eval v1",
+          "recommended": true
+        }
+      ]
+    },
+    "openai_compatible": {
+      "generator": [
+        {
+          "value": "gpt-5.3-codex",
+          "label": "gpt-5.3-codex",
+          "recommended": true
+        },
+        {
+          "value": "gpt-5.4",
+          "label": "gpt-5.4",
+          "recommended": false
+        },
+        {
+          "value": "gpt-5.2",
+          "label": "gpt-5.2",
+          "recommended": false
+        }
+      ],
+      "teacher": [
+        {
+          "value": "gpt-5.3-codex",
+          "label": "gpt-5.3-codex",
+          "recommended": true
+        },
+        {
+          "value": "gpt-5.4",
+          "label": "gpt-5.4",
+          "recommended": false
+        },
+        {
+          "value": "gpt-5.2",
+          "label": "gpt-5.2",
+          "recommended": false
+        }
+      ],
+      "eval": [
+        {
+          "value": "gpt-5.3-codex",
+          "label": "gpt-5.3-codex",
+          "recommended": true
+        },
+        {
+          "value": "gpt-5.4",
+          "label": "gpt-5.4",
+          "recommended": false
+        },
+        {
+          "value": "gpt-5.2",
+          "label": "gpt-5.2",
+          "recommended": false
+        }
+      ]
+    },
+    "anthropic_compatible": {
+      "generator": [
+        {
+          "value": "claude-3-5-haiku-20241022",
+          "label": "Claude 3.5 Haiku",
+          "recommended": true
+        },
+        {
+          "value": "claude-3-7-sonnet-20250219",
+          "label": "Claude 3.7 Sonnet",
+          "recommended": false
+        }
+      ],
+      "teacher": [
+        {
+          "value": "claude-3-5-haiku-20241022",
+          "label": "Claude 3.5 Haiku",
+          "recommended": true
+        },
+        {
+          "value": "claude-3-7-sonnet-20250219",
+          "label": "Claude 3.7 Sonnet",
+          "recommended": false
+        }
+      ],
+      "eval": [
+        {
+          "value": "claude-3-5-haiku-20241022",
+          "label": "Claude 3.5 Haiku",
+          "recommended": true
+        },
+        {
+          "value": "claude-3-7-sonnet-20250219",
+          "label": "Claude 3.7 Sonnet",
+          "recommended": false
+        }
+      ]
+    },
+    "minimax": {
+      "generator": [
+        {
+          "value": "MiniMax-M2.7",
+          "label": "MiniMax M2.7",
+          "recommended": true
+        },
+        {
+          "value": "MiniMax-M2.5",
+          "label": "MiniMax M2.5",
+          "recommended": false
+        }
+      ],
+      "teacher": [
+        {
+          "value": "MiniMax-M2.7",
+          "label": "MiniMax M2.7",
+          "recommended": true
+        },
+        {
+          "value": "MiniMax-M2.5",
+          "label": "MiniMax M2.5",
+          "recommended": false
+        }
+      ],
+      "eval": [
+        {
+          "value": "MiniMax-M2.7",
+          "label": "MiniMax M2.7",
+          "recommended": true
+        },
+        {
+          "value": "MiniMax-M2.5",
+          "label": "MiniMax M2.5",
+          "recommended": false
+        }
+      ]
+    },
+    "xiaomi": {
+      "generator": [
+        {
+          "value": "mimo-v2-flash",
+          "label": "mimo-v2-flash",
+          "recommended": true
+        },
+        {
+          "value": "mimo-v2-omni",
+          "label": "mimo-v2-omni",
+          "recommended": false
+        },
+        {
+          "value": "mimo-v2-pro",
+          "label": "mimo-v2-pro",
+          "recommended": false
+        }
+      ],
+      "teacher": [
+        {
+          "value": "mimo-v2-flash",
+          "label": "mimo-v2-flash",
+          "recommended": true
+        },
+        {
+          "value": "mimo-v2-omni",
+          "label": "mimo-v2-omni",
+          "recommended": false
+        },
+        {
+          "value": "mimo-v2-pro",
+          "label": "mimo-v2-pro",
+          "recommended": false
+        }
+      ],
+      "eval": [
+        {
+          "value": "mimo-v2-flash",
+          "label": "mimo-v2-flash",
+          "recommended": true
+        },
+        {
+          "value": "mimo-v2-omni",
+          "label": "mimo-v2-omni",
+          "recommended": false
+        },
+        {
+          "value": "mimo-v2-pro",
+          "label": "mimo-v2-pro",
+          "recommended": false
+        }
+      ]
+    }
+  }
+}

@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/styles/index.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,20 +30,55 @@
           <button class="ghost-button" id="refreshAllButton" type="button">刷新</button>
         </div>
 
-        <section class="sidebar-section">
+        <section class="sidebar-section sidebar-work-section">
+          <p class="sidebar-kicker">Work Surface</p>
           <div class="section-title-row">
             <h2>Tasks</h2>
-            <span id="taskCount" class="pill">0</span>
+            <div class="section-title-actions">
+              <span id="taskCount" class="pill">0</span>
+              <button class="ghost-button" id="createTaskButton" type="button">新建任务</button>
+            </div>
           </div>
+          <p class="sidebar-section-copy">当前正在维护和迭代的任务，从这里进入 task 级工作流。</p>
           <div class="task-list" id="taskList"></div>
         </section>
 
-        <section class="sidebar-section">
+        <section class="sidebar-section sidebar-history-section">
+          <p class="sidebar-kicker">History Ledger</p>
           <div class="section-title-row">
             <h2>Runs</h2>
             <span id="runCount" class="pill">0</span>
           </div>
+          <p class="sidebar-section-copy">按时间回看每次运行的状态、产物和人工复核闭环。</p>
           <div class="run-list" id="runList"></div>
+        </section>
+
+        <section class="sidebar-section sidebar-settings-section">
+          <p class="sidebar-kicker">Control Rail</p>
+          <div class="section-title-row">
+            <h2>Workspace</h2>
+            <span class="pill" id="sidebarSettingsPill">Rail</span>
+          </div>
+          <p class="sidebar-section-copy">系统级入口集中在这里。当前只开放全局模型配置，但导航结构已经按 workspace 能力预留。</p>
+          <button class="sidebar-settings-card" id="sidebarSettingsButton" data-workbench-tab="settings" type="button">
+            <div class="sidebar-settings-head">
+              <span class="sidebar-settings-gear">&#9881;</span>
+              <div>
+                <strong>全局模型</strong>
+                <span id="sidebarSettingsSummary">正在读取 provider 状态</span>
+              </div>
+            </div>
+            <div class="sidebar-settings-metrics" id="sidebarSettingsMetrics">
+              <span><strong>providers</strong>--</span>
+              <span><strong>ready</strong>--</span>
+              <span><strong>probe</strong>未测试</span>
+            </div>
+          </button>
+          <div class="sidebar-rail-foot" id="sidebarRailFoot">
+            <span><strong>route</strong>settings</span>
+            <span><strong>draft</strong>clean</span>
+            <span><strong>focus</strong>workspace llm</span>
+          </div>
         </section>
       </aside>
 
@@ -82,10 +117,10 @@
         </header>
 
         <nav class="workspace-tabs" aria-label="Workbench Tabs">
-          <button class="workspace-tab is-active" data-workbench-tab="task-spec" type="button">任务定义</button>
-          <button class="workspace-tab" data-workbench-tab="run-control" type="button">运行控制</button>
+          <button class="workspace-tab is-active" data-workbench-tab="run-control" type="button">运行控制</button>
           <button class="workspace-tab" data-workbench-tab="artifacts" type="button">运行产物</button>
           <button class="workspace-tab" data-workbench-tab="review" type="button">人工复核</button>
+          <button class="workspace-tab" data-workbench-tab="task-spec" type="button">任务配置</button>
         </nav>
 
         <div class="tab-panels">
@@ -95,12 +130,8 @@
                 <div class="panel-heading">
                   <div>
                     <p class="panel-kicker">Pipeline Control</p>
-                    <h2>阶段执行驾驶舱</h2>
+                    <h2>推进当前 Run</h2>
                   </div>
-                  <label class="inline-field">
-                    <span>Reviewer</span>
-                    <input id="reviewerInput" type="text" placeholder="可选，保存 review 时写入" />
-                  </label>
                 </div>
 
                 <div class="control-section">
@@ -218,8 +249,8 @@
           <section class="panel tab-panel task-spec-panel" data-workbench-panel="task-spec" hidden>
             <div class="panel-heading">
               <div>
-                <p class="panel-kicker">Task Spec</p>
-                <h2>任务定义</h2>
+                <p class="panel-kicker">Task Config</p>
+                <h2>任务配置</h2>
               </div>
               <div class="task-spec-actions">
                 <div class="task-spec-switch" id="promptViewSwitch">
@@ -233,17 +264,17 @@
               </div>
             </div>
 
-            <div class="task-config-toolbar">
+          <div class="task-config-toolbar">
               <div class="task-config-status" id="taskConfigStatus">配置已加载</div>
               <div class="task-config-advice" id="taskConfigAdvice">
-                当前默认展示只读任务定义。点击“编辑配置”后进入独立编辑页面。
+                当前默认展示只读任务配置。点击“编辑配置”后进入独立编辑页面。
               </div>
             </div>
 
             <div class="task-spec-read-view" id="taskSpecReadView">
               <div class="task-dossier-top">
                 <article class="task-dossier-hero" id="taskDossierHero">
-                  <div class="empty-state">选择 task 后显示任务卷宗。</div>
+                  <div class="empty-state">选择 task 后显示任务配置。</div>
                 </article>
 
                 <article class="task-spec-block task-actions-block">
@@ -328,12 +359,12 @@
 
               <section class="config-editor-grid">
                 <article class="task-spec-block">
-                  <h3>基础信息</h3>
+                  <h3>任务边界</h3>
                   <div class="config-form-grid" id="taskMetaForm"></div>
                 </article>
 
-                <article class="task-spec-block">
-                  <h3>运行参数</h3>
+                <article class="task-spec-block config-runtime-block">
+                  <h3>模型与运行参数</h3>
                   <div class="config-runtime-grid" id="taskRuntimeEditor"></div>
                 </article>
 
@@ -351,8 +382,8 @@
                 <article class="task-spec-block config-scenario-block">
                   <div class="config-section-head">
                     <div>
-                      <h3>场景矩阵编辑</h3>
-                      <p>控制样本覆盖面、上下文和预计生成数量。</p>
+                      <h3>场景矩阵</h3>
+                      <p>首屏只改高频字段，上下文放进高级设置。</p>
                     </div>
                     <button class="ghost-button" id="addScenarioButton" type="button">新增 Scenario</button>
                   </div>
@@ -366,6 +397,41 @@
                 </article>
               </section>
             </div>
+          </section>
+
+          <section class="panel tab-panel settings-panel" data-workbench-panel="settings" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Global Settings</p>
+                <h2>全局大模型配置</h2>
+              </div>
+              <div class="llm-deck-actions">
+                <button class="ghost-button" id="reloadLlmSettingsButton" type="button">重载全局配置</button>
+                <button class="primary-button" id="saveLlmSettingsButton" type="button">保存全局配置</button>
+              </div>
+            </div>
+
+            <section class="llm-control-deck" aria-labelledby="llmDeckTitle">
+              <div class="llm-deck-head">
+                <div>
+                  <p class="panel-kicker">LLM Control Deck</p>
+                  <h3 id="llmDeckTitle">Workspace Provider Matrix</h3>
+                  <p class="llm-deck-copy">
+                    在这里统一维护 workspace 级 provider、端点、密钥和默认模型。task runtime 只负责引用，不再在任务页编辑全局源。
+                  </p>
+                </div>
+                <div class="llm-deck-tools">
+                  <button class="ghost-button" id="addLlmProviderButton" type="button">新增 Provider</button>
+                </div>
+              </div>
+              <div class="llm-deck-statusbar">
+                <div class="llm-deck-status" id="llmDeckStatus">正在读取全局配置...</div>
+                <div class="llm-deck-meta" id="llmDeckMeta">连通性测试会使用当前卡片中的即时输入值。</div>
+              </div>
+              <div class="llm-provider-grid" id="llmProviderGrid">
+                <div class="empty-state">正在准备全局 LLM 配置面板。</div>
+              </div>
+            </section>
           </section>
 
           <section class="panel tab-panel artifact-panel" data-workbench-panel="artifacts" hidden>
@@ -429,6 +495,10 @@
                 <h2>人工复核</h2>
               </div>
               <div class="review-actions">
+                <label class="inline-field review-inline-field">
+                  <span>Reviewer</span>
+                  <input id="reviewerInput" type="text" placeholder="保存 review 时写入，可选" />
+                </label>
                 <button class="ghost-button" id="reloadReviewButton" type="button">刷新复核</button>
                 <button class="primary-button" id="saveReviewButton" type="button">保存 review_results</button>
               </div>
@@ -441,6 +511,6 @@
       </main>
     </div>
 
-    <script src="/assets/app.js"></script>
+    <script type="module" src="/assets/app.js"></script>
   </body>
 </html>

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +15,36 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from dataforge.core.env import load_dotenv
+from dataforge.core.env import apply_env_updates, load_dotenv, read_dotenv, write_dotenv_updates
 from dataforge.core.io import read_json, read_jsonl, read_text, read_yaml, utc_now, write_json, write_jsonl, write_text, write_yaml
-from dataforge.core.registry import RUN_ARTIFACT_PATHS, TaskConfig, TaskRun, discover_tasks, load_task_config, resolve_task_run
+from dataforge.core.registry import (
+    RUN_ARTIFACT_PATHS,
+    TaskConfig,
+    TaskRun,
+    build_default_task_definition,
+    create_task_scaffold,
+    discover_tasks,
+    load_task_config,
+    resolve_task_run,
+    validate_task_name,
+)
 from dataforge.core.review import summarize_review_records, utc_now as review_utc_now, validate_review_records
+from dataforge.core.runtime_catalog import (
+    BUILTIN_RUNTIME_PROVIDER_CATALOG,
+    GLOBAL_LLM_MODEL_ENV_KEYS,
+    RUNTIME_STAGE_ORDER,
+    build_runtime_catalog,
+    load_custom_runtime_providers,
+    load_runtime_provider_model_overrides,
+    normalize_provider_models,
+    recommended_provider_model,
+    runtime_provider_catalog,
+    save_custom_runtime_providers,
+    save_runtime_provider_model_overrides,
+)
 from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, student_export, validate_review
+from dataforge.providers.anthropic_compatible import AnthropicCompatibleClient, AnthropicCompatibleError
+from dataforge.providers.openai_compatible import OpenAICompatibleChatClient, OpenAICompatibleError
 
 
 COMMAND_HANDLERS = {
@@ -30,6 +59,9 @@ COMMAND_HANDLERS = {
 }
 NEW_RUN_COMMANDS = {"generate", "run-all"}
 SUPPORTED_COMMANDS = set(COMMAND_HANDLERS) | {"run-all"}
+CUSTOM_PROVIDER_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+ENV_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
+CUSTOM_PROVIDER_IMPLEMENTATIONS = tuple(name for name in BUILTIN_RUNTIME_PROVIDER_CATALOG if name != "mock")
 
 
 class CommandRequest(BaseModel):
@@ -50,6 +82,45 @@ class TaskConfigFilesPayload(BaseModel):
     scenarios: list[dict[str, Any]]
     generator_prompt: str
     teacher_prompt: str
+
+
+class TaskCreatePayload(BaseModel):
+    task: dict[str, Any]
+    runtime: dict[str, dict[str, Any]] | None = None
+    rules: dict[str, Any] | None = None
+    exports: dict[str, Any] | None = None
+    labels: list[str] | None = None
+    scenarios: list[dict[str, Any]] | None = None
+    generator_prompt: str | None = None
+    teacher_prompt: str | None = None
+
+
+class GlobalLLMProviderPayload(BaseModel):
+    name: str
+    label: str | None = None
+    description: str | None = None
+    badge: str | None = None
+    implementation: str | None = None
+    base_url_env: str | None = None
+    api_key_env: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    default_model: str | None = None
+    models: dict[str, list[dict[str, Any]]] | None = None
+
+
+class GlobalLLMSettingsPayload(BaseModel):
+    providers: list[GlobalLLMProviderPayload]
+
+
+class GlobalLLMTestPayload(BaseModel):
+    provider: str
+    implementation: str | None = None
+    base_url_env: str | None = None
+    api_key_env: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    default_model: str | None = None
 
 
 def _http_404(message: str) -> HTTPException:
@@ -83,6 +154,553 @@ def _load_task(project_root: Path, task_name: str) -> TaskConfig:
         return load_task_config(project_root, task_name)
     except FileNotFoundError as exc:
         raise _http_404(str(exc)) from exc
+
+
+def _normalize_optional_string(value: Any, *, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_provider_name(value: Any, *, field: str) -> str:
+    normalized = _normalize_string(value, field=field)
+    if not CUSTOM_PROVIDER_NAME_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{field} must match ^[a-z0-9][a-z0-9_-]*$")
+    return normalized
+
+
+def _normalize_env_key(value: Any, *, field: str, fallback: str | None = None) -> str | None:
+    normalized = _normalize_optional_string(value, field=field)
+    if normalized is None:
+        return fallback
+    normalized = normalized.upper()
+    if not ENV_KEY_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{field} must match ^[A-Z][A-Z0-9_]*$")
+    return normalized
+
+
+def _default_custom_env_key(provider_name: str, suffix: str) -> str:
+    return f"{provider_name.upper().replace('-', '_')}_{suffix}"
+
+
+def _provider_catalog(project_root: Path | None = None) -> dict[str, dict[str, Any]]:
+    return runtime_provider_catalog(project_root)
+
+
+def _provider_env_keys(provider_name: str, *, provider_meta: dict[str, Any] | None = None) -> dict[str, str | None]:
+    meta = provider_meta or _provider_catalog().get(provider_name) or {}
+    defaults = meta.get("defaults", {})
+    return {
+        "base_url_env": defaults.get("base_url_env"),
+        "api_key_env": defaults.get("api_key_env"),
+        "model_env": GLOBAL_LLM_MODEL_ENV_KEYS.get(provider_name),
+    }
+
+
+def _effective_env_values(project_root: Path) -> dict[str, str]:
+    env_path = project_root / ".env"
+    file_values = read_dotenv(env_path)
+    catalog = _provider_catalog(project_root)
+    relevant_keys = {
+        env_key
+        for provider_name, provider_meta in catalog.items()
+        for env_key in _provider_env_keys(provider_name, provider_meta=provider_meta).values()
+        if env_key
+    }
+    for key in relevant_keys:
+        value = os.environ.get(key)
+        if value is not None:
+            file_values[key] = value
+    return file_values
+
+
+def _mask_secret(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}…{value[-4:]}"
+
+
+def _serialize_global_llm_settings(project_root: Path) -> dict[str, Any]:
+    env_values = _effective_env_values(project_root)
+    catalog = _provider_catalog(project_root)
+    providers: list[dict[str, Any]] = []
+    for provider_name, provider_meta in catalog.items():
+        env_keys = _provider_env_keys(provider_name, provider_meta=provider_meta)
+        api_key = env_values.get(env_keys["api_key_env"]) if env_keys["api_key_env"] else None
+        base_url = env_values.get(env_keys["base_url_env"]) if env_keys["base_url_env"] else None
+        default_model = env_values.get(env_keys["model_env"]) if env_keys["model_env"] else None
+        providers.append(
+            {
+                "name": provider_name,
+                "label": provider_meta["label"],
+                "description": provider_meta["description"],
+                "badge": provider_meta.get("badge"),
+                "implementation": provider_meta.get("implementation", provider_name),
+                "kind": provider_meta.get("kind", "builtin"),
+                "editable": bool(provider_meta.get("editable")),
+                "models": provider_meta.get("models", {}),
+                "configured": provider_name == "mock" or bool(api_key),
+                "env_keys": env_keys,
+                "config": {
+                    "base_url": base_url,
+                    "default_model": default_model or recommended_provider_model(provider_meta),
+                    "api_key": "",
+                    "has_api_key": bool(api_key),
+                    "api_key_masked": _mask_secret(api_key),
+                },
+            }
+        )
+    return {"providers": providers}
+
+
+def _normalize_global_llm_settings(project_root: Path, payload: GlobalLLMSettingsPayload) -> dict[str, list[dict[str, Any]]]:
+    catalog = _provider_catalog(project_root)
+    builtin_names = {
+        provider_name
+        for provider_name, provider_meta in catalog.items()
+        if provider_meta.get("kind") == "builtin"
+    }
+    normalized: dict[str, list[dict[str, Any]]] = {"builtin": [], "custom": []}
+    seen: set[str] = set()
+
+    for item in payload.providers:
+        provider_name = _normalize_provider_name(item.name, field="providers[].name")
+        if provider_name in seen:
+            raise ValueError(f"Duplicate provider in payload: {provider_name}")
+        seen.add(provider_name)
+
+        base_url = _normalize_optional_string(item.base_url, field=f"{provider_name}.base_url")
+        api_key = _normalize_optional_string(item.api_key, field=f"{provider_name}.api_key")
+        default_model = _normalize_optional_string(item.default_model, field=f"{provider_name}.default_model")
+        provider_meta = catalog.get(provider_name)
+        provider_models = normalize_provider_models(item.models if item.models is not None else (provider_meta or {}).get("models", {}))
+
+        if provider_name in builtin_names:
+            normalized["builtin"].append(
+                {
+                    "name": provider_name,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "default_model": default_model,
+                    "models": provider_models,
+                }
+            )
+            continue
+
+        implementation = _normalize_optional_string(item.implementation, field=f"{provider_name}.implementation")
+        if implementation is None and provider_meta and provider_meta.get("kind") == "custom":
+            implementation = str(provider_meta.get("implementation", "")).strip() or None
+        if implementation not in CUSTOM_PROVIDER_IMPLEMENTATIONS:
+            raise ValueError(
+                f"{provider_name}.implementation must be one of: {', '.join(CUSTOM_PROVIDER_IMPLEMENTATIONS)}"
+            )
+
+        implementation_meta = BUILTIN_RUNTIME_PROVIDER_CATALOG[implementation]
+        previous_defaults = provider_meta.get("defaults", {}) if provider_meta else {}
+        base_url_env = _normalize_env_key(
+            item.base_url_env,
+            field=f"{provider_name}.base_url_env",
+            fallback=previous_defaults.get("base_url_env") or _default_custom_env_key(provider_name, "BASE_URL"),
+        )
+        api_key_env = _normalize_env_key(
+            item.api_key_env,
+            field=f"{provider_name}.api_key_env",
+            fallback=previous_defaults.get("api_key_env") or _default_custom_env_key(provider_name, "API_KEY"),
+        )
+        label = _normalize_optional_string(item.label, field=f"{provider_name}.label") or (
+            str(provider_meta.get("label", "")).strip() if provider_meta else provider_name
+        )
+        description = _normalize_optional_string(item.description, field=f"{provider_name}.description") or (
+            str(provider_meta.get("description", "")).strip() if provider_meta else implementation_meta["description"]
+        )
+        badge = _normalize_optional_string(item.badge, field=f"{provider_name}.badge") or (
+            str(provider_meta.get("badge", "")).strip() if provider_meta else "custom"
+        )
+
+        normalized["custom"].append(
+            {
+                "name": provider_name,
+                "label": label,
+                "description": description,
+                "badge": badge,
+                "implementation": implementation,
+                "base_url_env": base_url_env,
+                "api_key_env": api_key_env,
+                "default_model": default_model or recommended_provider_model(implementation_meta),
+                "base_url": base_url,
+                "api_key": api_key,
+                "models": provider_models,
+            }
+        )
+
+    return normalized
+
+
+def _save_global_llm_settings(project_root: Path, payload: GlobalLLMSettingsPayload) -> dict[str, Any]:
+    normalized = _normalize_global_llm_settings(project_root, payload)
+    env_path = project_root / ".env"
+    current_values = _effective_env_values(project_root)
+    catalog = _provider_catalog(project_root)
+    existing_custom = {
+        str(item.get("name", "")).strip(): item
+        for item in load_custom_runtime_providers(project_root)
+        if str(item.get("name", "")).strip()
+    }
+    existing_model_overrides = load_runtime_provider_model_overrides(project_root)
+    next_custom = {item["name"]: item for item in normalized["custom"]}
+    env_updates: dict[str, str | None] = {}
+    model_overrides = dict(existing_model_overrides)
+
+    for item in normalized["builtin"]:
+        provider_name = item["name"]
+        provider_meta = catalog.get(provider_name) or BUILTIN_RUNTIME_PROVIDER_CATALOG.get(provider_name, {})
+        env_keys = _provider_env_keys(provider_name, provider_meta=provider_meta)
+        base_url_env = env_keys["base_url_env"]
+        api_key_env = env_keys["api_key_env"]
+        model_env = env_keys["model_env"]
+
+        if base_url_env:
+            env_updates[base_url_env] = item["base_url"]
+        if model_env:
+            env_updates[model_env] = item["default_model"]
+        if api_key_env and item["api_key"] is not None:
+            env_updates[api_key_env] = item["api_key"]
+        elif api_key_env and api_key_env not in current_values:
+            env_updates[api_key_env] = None
+        model_overrides[provider_name] = item["models"]
+
+    for provider_name, item in next_custom.items():
+        previous = existing_custom.get(provider_name, {})
+        previous_base_url_env = str(previous.get("base_url_env", "")).strip() or None
+        previous_api_key_env = str(previous.get("api_key_env", "")).strip() or None
+        base_url_env = item["base_url_env"]
+        api_key_env = item["api_key_env"]
+
+        if previous_base_url_env and previous_base_url_env != base_url_env:
+            env_updates[previous_base_url_env] = None
+        if previous_api_key_env and previous_api_key_env != api_key_env:
+            env_updates[previous_api_key_env] = None
+
+        if base_url_env:
+            migrated_base_url = (
+                current_values.get(previous_base_url_env)
+                if item["base_url"] is None and previous_base_url_env and previous_base_url_env != base_url_env
+                else None
+            )
+            env_updates[base_url_env] = item["base_url"] if item["base_url"] is not None else migrated_base_url
+
+        if api_key_env:
+            migrated_api_key = (
+                current_values.get(previous_api_key_env)
+                if item["api_key"] is None and previous_api_key_env and previous_api_key_env != api_key_env
+                else None
+            )
+            if item["api_key"] is not None:
+                env_updates[api_key_env] = item["api_key"]
+            elif migrated_api_key is not None:
+                env_updates[api_key_env] = migrated_api_key
+            elif api_key_env not in current_values:
+                env_updates[api_key_env] = None
+        model_overrides[provider_name] = item["models"]
+
+    for provider_name, previous in existing_custom.items():
+        if provider_name in next_custom:
+            continue
+        for env_key in (previous.get("base_url_env"), previous.get("api_key_env")):
+            normalized_env_key = str(env_key).strip() if isinstance(env_key, str) else ""
+            if normalized_env_key:
+                env_updates[normalized_env_key] = None
+    for provider_name in set(existing_model_overrides) - {
+        *(item["name"] for item in normalized["builtin"]),
+        *next_custom.keys(),
+    }:
+        model_overrides.pop(provider_name, None)
+
+    save_custom_runtime_providers(
+        project_root,
+        [
+            {
+                "name": item["name"],
+                "label": item["label"],
+                "description": item["description"],
+                "badge": item["badge"],
+                "implementation": item["implementation"],
+                "base_url_env": item["base_url_env"],
+                "api_key_env": item["api_key_env"],
+                "default_model": item["default_model"],
+            }
+            for item in normalized["custom"]
+        ],
+    )
+    save_runtime_provider_model_overrides(project_root, model_overrides)
+    write_dotenv_updates(env_path, env_updates)
+    apply_env_updates(env_updates)
+    return _serialize_global_llm_settings(project_root)
+
+
+def _resolve_global_llm_runtime(
+    project_root: Path,
+    provider_name: str,
+    *,
+    implementation: str | None = None,
+    base_url_env: str | None = None,
+    api_key_env: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    default_model: str | None = None,
+) -> dict[str, Any]:
+    catalog = _provider_catalog(project_root)
+    provider_meta = catalog.get(provider_name)
+    resolved_implementation = implementation
+    resolved_base_url_env = base_url_env
+    resolved_api_key_env = api_key_env
+
+    if provider_meta is None:
+        if resolved_implementation not in CUSTOM_PROVIDER_IMPLEMENTATIONS:
+            raise ValueError(f"Unsupported provider: {provider_name}")
+        provider_meta = BUILTIN_RUNTIME_PROVIDER_CATALOG[resolved_implementation]
+    else:
+        resolved_implementation = resolved_implementation or str(provider_meta.get("implementation", provider_name))
+
+    env_values = _effective_env_values(project_root)
+    env_keys = _provider_env_keys(provider_name, provider_meta=provider_meta)
+    if resolved_base_url_env is not None:
+        env_keys["base_url_env"] = resolved_base_url_env
+    if resolved_api_key_env is not None:
+        env_keys["api_key_env"] = resolved_api_key_env
+    resolved_base_url = base_url if base_url is not None else (env_values.get(env_keys["base_url_env"]) if env_keys["base_url_env"] else None)
+    resolved_api_key = api_key if api_key is not None else (env_values.get(env_keys["api_key_env"]) if env_keys["api_key_env"] else None)
+    resolved_model = default_model if default_model is not None else (
+        env_values.get(env_keys["model_env"]) if env_keys["model_env"] else None
+    )
+
+    runtime = dict(provider_meta.get("defaults", {}))
+    runtime["provider"] = resolved_implementation or provider_meta.get("implementation", provider_name)
+    runtime["model"] = resolved_model or recommended_provider_model(provider_meta)
+    runtime["temperature"] = 0
+    runtime["max_tokens"] = 32
+    runtime["max_retries"] = 0
+    runtime["timeout_seconds"] = min(int(runtime.get("timeout_seconds", 15) or 15), 15)
+    if env_keys["base_url_env"]:
+        runtime["base_url_env"] = env_keys["base_url_env"]
+    if env_keys["api_key_env"]:
+        runtime["api_key_env"] = env_keys["api_key_env"]
+    if resolved_base_url:
+        runtime["base_url"] = resolved_base_url
+    if resolved_api_key:
+        runtime["api_key"] = resolved_api_key
+    return runtime
+
+
+def _runtime_endpoint(implementation: str, runtime: dict[str, Any]) -> str:
+    if implementation == "openai_compatible":
+        return runtime.get("base_url") or "https://api.openai.com/v1"
+    if implementation in {"anthropic_compatible", "minimax"}:
+        return runtime.get("base_url") or "https://api.anthropic.com/v1"
+    return "local://mock"
+
+
+def _parse_model_timestamp(value: Any) -> int | None:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        return int(normalized)
+    try:
+        return int(datetime.fromisoformat(normalized.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def _extract_model_date_token(model_id: str) -> int | None:
+    match = re.search(r"(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)", model_id)
+    if not match:
+        return None
+    try:
+        parsed = datetime(
+            year=int(match.group(1)),
+            month=int(match.group(2)),
+            day=int(match.group(3)),
+            tzinfo=timezone.utc,
+        )
+    except ValueError:
+        return None
+    return int(parsed.timestamp())
+
+
+def _extract_model_version_token(model_id: str) -> tuple[int, ...] | None:
+    match = re.search(r"(\d+(?:[.-]\d+){0,3})", model_id)
+    if not match:
+        return None
+    parts: list[int] = []
+    for chunk in re.split(r"[.-]", match.group(1)):
+        if not chunk.isdigit():
+            return None
+        parts.append(int(chunk))
+    return tuple(parts) if parts else None
+
+
+def _model_sort_key(model_id: str, item: dict[str, Any], index: int) -> tuple[Any, ...]:
+    timestamp = _parse_model_timestamp(item.get("created"))
+    if timestamp is None:
+        timestamp = _parse_model_timestamp(item.get("created_at"))
+    if timestamp is not None:
+        return (3, timestamp, -index)
+
+    dated = _extract_model_date_token(model_id)
+    if dated is not None:
+        return (2, dated, -index)
+
+    version = _extract_model_version_token(model_id)
+    if version is not None:
+        return (1, version, -index)
+
+    return (0, -index)
+
+
+def _is_generation_model(model_id: str) -> bool:
+    normalized = model_id.lower()
+    excluded_tokens = (
+        "embedding",
+        "embed",
+        "moderation",
+        "tts",
+        "transcribe",
+        "transcription",
+        "whisper",
+        "gpt-image",
+        "dall-e",
+        "omni-moderation",
+        "audio-preview",
+    )
+    return not any(token in normalized for token in excluded_tokens)
+
+
+def _normalize_discovered_models(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        model_id = str(item.get("id") or item.get("value") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        label = str(item.get("display_name") or item.get("name") or item.get("label") or model_id).strip() or model_id
+        normalized.append(
+            {
+                "value": model_id,
+                "label": label,
+                "_sort_key": _model_sort_key(model_id, item, index),
+                "_candidate": _is_generation_model(model_id),
+            }
+        )
+
+    normalized.sort(key=lambda item: item["_sort_key"], reverse=True)
+    display_items = [item for item in normalized if item["_candidate"]] or normalized
+    latest_model = display_items[0]["value"] if display_items else None
+    return (
+        [
+            {
+                "value": item["value"],
+                "label": item["label"],
+                "recommended": item["value"] == latest_model,
+            }
+            for item in display_items
+        ],
+        latest_model,
+    )
+
+
+def _discover_runtime_models(implementation: str, runtime: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+    if implementation == "openai_compatible":
+        models = OpenAICompatibleChatClient().list_models(runtime)
+        return _normalize_discovered_models(models)
+    if implementation in {"anthropic_compatible", "minimax"}:
+        models = AnthropicCompatibleClient().list_models(runtime)
+        return _normalize_discovered_models(models)
+    return ([], None)
+
+
+def _probe_llm_connection(provider_name: str, runtime: dict[str, Any], *, project_root: Path | None = None) -> dict[str, Any]:
+    provider_meta = _provider_catalog(project_root).get(provider_name) if project_root else _provider_catalog().get(provider_name)
+    implementation = (
+        str(runtime.get("provider", "")).strip()
+        or (str(provider_meta.get("implementation", provider_name)) if provider_meta else provider_name)
+    )
+    started_at = time.perf_counter()
+    endpoint = _runtime_endpoint(implementation, runtime)
+    models: list[dict[str, Any]] = []
+    latest_model: str | None = None
+    models_error: str | None = None
+    probe_runtime = dict(runtime)
+    if implementation != "mock":
+        try:
+            models, latest_model = _discover_runtime_models(implementation, runtime)
+        except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
+            models_error = str(exc)
+
+    discovered_model_ids = {item["value"] for item in models}
+    if latest_model and (not probe_runtime.get("model") or probe_runtime.get("model") not in discovered_model_ids):
+        probe_runtime["model"] = latest_model
+
+    try:
+        if implementation == "mock":
+            preview = "mock-ok"
+        elif implementation == "openai_compatible":
+            client = OpenAICompatibleChatClient()
+            preview = client.complete(
+                probe_runtime,
+                [
+                    {"role": "system", "content": 'Reply with JSON {"status":"ok"}.'},
+                    {"role": "user", "content": "connection test"},
+                ],
+            )
+        elif implementation in {"anthropic_compatible", "minimax"}:
+            client = AnthropicCompatibleClient()
+            preview = client.complete(
+                probe_runtime,
+                [
+                    {"role": "system", "content": "Reply with OK."},
+                    {"role": "user", "content": "connection test"},
+                ],
+            )
+        else:
+            raise ValueError(f"Unsupported provider: {implementation}")
+    except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
+        return {
+            "ok": False,
+            "provider": provider_name,
+            "implementation": implementation,
+            "model": probe_runtime.get("model"),
+            "latest_model": latest_model,
+            "models": models,
+            "endpoint": endpoint,
+            "latency_ms": int((time.perf_counter() - started_at) * 1000),
+            "error": str(exc),
+        }
+
+    result = {
+        "ok": True,
+        "provider": provider_name,
+        "implementation": implementation,
+        "model": probe_runtime.get("model"),
+        "latest_model": latest_model,
+        "models": models,
+        "endpoint": endpoint,
+        "latency_ms": int((time.perf_counter() - started_at) * 1000),
+        "preview": str(preview).strip()[:120],
+    }
+    if models_error:
+        result["models_error"] = models_error
+    return result
 
 
 def _load_runs_index(task: TaskConfig) -> list[dict[str, Any]]:
@@ -143,6 +761,19 @@ def _delete_run(task: TaskConfig, run_id: str) -> list[dict[str, Any]]:
     _write_runs_index(task, remaining_runs)
     _sync_latest_run_pointer(task, remaining_runs)
     return sorted(remaining_runs, key=lambda item: item.get("created_at", ""), reverse=True)
+
+
+def _delete_task(task: TaskConfig) -> list[str]:
+    task_root = task.task_root
+    tasks_root = (task.project_root / "tasks").resolve()
+
+    if not task_root.exists():
+        raise _http_404(f"Task not found: {task.name}")
+    if task_root.parent != tasks_root:
+        raise _http_400(f"Refusing to delete task outside tasks root: {task_root}")
+
+    shutil.rmtree(task_root)
+    return discover_tasks(task.project_root)
 
 
 def _artifact_kind(path: Path) -> str:
@@ -213,7 +844,7 @@ def _serialize_task_spec(task: TaskConfig) -> dict[str, Any]:
         "language": task.config.get("language"),
         "task_type": task.config.get("task_type"),
         "entry_schema": task.config.get("entry_schema"),
-        "runtime": task.runtime,
+        "runtime": task.raw_runtime,
         "rules": task.rules,
         "exports": task.exports,
         "labels": _task_labels(task),
@@ -223,6 +854,10 @@ def _serialize_task_spec(task: TaskConfig) -> dict[str, Any]:
         "teacher_prompt": read_text(task.path_for("teacher_prompt")),
         "raw_config": task.config,
     }
+
+
+def _build_runtime_catalog(project_root: Path | None = None) -> dict[str, Any]:
+    return build_runtime_catalog(project_root)
 
 
 def _estimate_scenario_samples(scenario: dict[str, Any]) -> int:
@@ -251,7 +886,7 @@ def _serialize_task_config_files(task: TaskConfig) -> dict[str, Any]:
             "task_type": task.config.get("task_type"),
             "entry_schema": task.config.get("entry_schema"),
         },
-        "runtime": task.runtime,
+        "runtime": task.raw_runtime,
         "rules": task.rules,
         "exports": task.exports,
         "labels": _task_labels(task),
@@ -261,6 +896,7 @@ def _serialize_task_config_files(task: TaskConfig) -> dict[str, Any]:
         "teacher_prompt": read_text(task.path_for("teacher_prompt")),
         "estimated_sample_count": sum(item["estimated_samples"] for item in scenario_estimates),
         "scenario_estimates": scenario_estimates,
+        "runtime_catalog": _build_runtime_catalog(task.project_root),
     }
 
 
@@ -415,6 +1051,52 @@ def _normalize_task_config_files(task_name: str, payload: TaskConfigFilesPayload
     }
 
 
+def _normalize_task_create_payload(payload: TaskCreatePayload) -> dict[str, Any]:
+    task_section = payload.task
+    if not isinstance(task_section, dict):
+        raise ValueError("task must be an object")
+
+    task_name = validate_task_name(_normalize_string(task_section.get("name"), field="task.name"))
+    defaults = build_default_task_definition(task_name)
+    merged_task = {
+        **defaults["task"],
+        **{
+            key: value
+            for key, value in task_section.items()
+            if key in {"name", "theme", "language", "task_type", "entry_schema"} and value is not None
+        },
+    }
+
+    normalized_task = {
+        "name": validate_task_name(_normalize_string(merged_task.get("name"), field="task.name")),
+        "theme": _normalize_string(merged_task.get("theme"), field="task.theme"),
+        "language": _normalize_string(merged_task.get("language"), field="task.language"),
+        "task_type": _normalize_string(merged_task.get("task_type"), field="task.task_type"),
+        "entry_schema": _normalize_string(merged_task.get("entry_schema"), field="task.entry_schema"),
+    }
+
+    runtime_payload = payload.runtime if payload.runtime is not None else defaults["runtime"]
+    rules_payload = payload.rules if payload.rules is not None else defaults["rules"]
+    exports_payload = payload.exports if payload.exports is not None else defaults["exports"]
+    labels_payload = payload.labels if payload.labels is not None else defaults["labels"]
+    scenarios_payload = payload.scenarios if payload.scenarios is not None else defaults["scenarios"]
+    generator_prompt_payload = (
+        payload.generator_prompt if payload.generator_prompt is not None else defaults["generator_prompt"]
+    )
+    teacher_prompt_payload = payload.teacher_prompt if payload.teacher_prompt is not None else defaults["teacher_prompt"]
+
+    return {
+        "task": normalized_task,
+        "runtime": _normalize_runtime(runtime_payload),
+        "rules": _normalize_primitive_object(rules_payload, field="rules"),
+        "exports": _normalize_primitive_object(exports_payload, field="exports"),
+        "labels": _normalize_string_list(labels_payload, field="labels"),
+        "scenarios": _normalize_scenarios(scenarios_payload),
+        "generator_prompt": _normalize_prompt(generator_prompt_payload, field="generator_prompt"),
+        "teacher_prompt": _normalize_prompt(teacher_prompt_payload, field="teacher_prompt"),
+    }
+
+
 def _save_task_config_files(task: TaskConfig, normalized: dict[str, Any]) -> None:
     config = read_yaml(task.config_path)
     config["name"] = normalized["task"]["name"]
@@ -509,13 +1191,71 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/settings/llm")
+    def get_global_llm_settings() -> dict[str, Any]:
+        return _serialize_global_llm_settings(resolved_root)
+
+    @app.put("/api/settings/llm")
+    def save_global_llm_settings(payload: GlobalLLMSettingsPayload) -> dict[str, Any]:
+        try:
+            settings = _save_global_llm_settings(resolved_root, payload)
+        except ValueError as exc:
+            raise _http_400(str(exc)) from exc
+        return {"ok": True, "settings": settings}
+
+    @app.post("/api/settings/llm/test")
+    def test_global_llm_connection(payload: GlobalLLMTestPayload) -> dict[str, Any]:
+        try:
+            provider_name = _normalize_provider_name(payload.provider, field="provider")
+            runtime = _resolve_global_llm_runtime(
+                resolved_root,
+                provider_name,
+                implementation=_normalize_optional_string(payload.implementation, field="implementation"),
+                base_url_env=_normalize_env_key(payload.base_url_env, field="base_url_env"),
+                api_key_env=_normalize_env_key(payload.api_key_env, field="api_key_env"),
+                base_url=_normalize_optional_string(payload.base_url, field="base_url"),
+                api_key=_normalize_optional_string(payload.api_key, field="api_key"),
+                default_model=_normalize_optional_string(payload.default_model, field="default_model"),
+            )
+        except ValueError as exc:
+            raise _http_400(str(exc)) from exc
+        return _probe_llm_connection(provider_name, runtime, project_root=resolved_root)
+
     @app.get("/api/tasks")
     def list_tasks() -> dict[str, list[dict[str, Any]]]:
         return {"items": [_serialize_task(resolved_root, task_name) for task_name in discover_tasks(resolved_root)]}
 
+    @app.post("/api/tasks")
+    def create_task(payload: TaskCreatePayload) -> dict[str, Any]:
+        try:
+            normalized = _normalize_task_create_payload(payload)
+            task = create_task_scaffold(resolved_root, normalized)
+        except FileExistsError as exc:
+            raise _http_400(str(exc)) from exc
+        except ValueError as exc:
+            raise _http_400(str(exc)) from exc
+
+        return {
+            "ok": True,
+            "task": _serialize_task(resolved_root, task.name),
+            "config": _serialize_task_config_files(task),
+            "spec": _serialize_task_spec(task),
+        }
+
     @app.get("/api/tasks/{task_name}")
     def get_task(task_name: str) -> dict[str, Any]:
         return _serialize_task(resolved_root, task_name)
+
+    @app.delete("/api/tasks/{task_name}")
+    def delete_task(task_name: str) -> dict[str, Any]:
+        task = _load_task(resolved_root, task_name)
+        remaining_tasks = _delete_task(task)
+        return {
+            "ok": True,
+            "deleted_task_name": task_name,
+            "next_task_name": remaining_tasks[0] if remaining_tasks else None,
+            "items": [_serialize_task(resolved_root, name) for name in remaining_tasks],
+        }
 
     @app.get("/api/tasks/{task_name}/spec")
     def get_task_spec(task_name: str) -> dict[str, Any]:

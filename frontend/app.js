@@ -1,3 +1,10 @@
+import { NEW_RUN_COMMANDS, PIPELINE_STAGES } from "./js/core/constants.js";
+import { api, escapeHtml, formatArtifactValue, formatDate } from "./js/core/platform.js";
+import { createDefaultTaskConfig, hasTaskConfigChanges } from "./js/core/task-config.js";
+import { createTaskSpecModule } from "./js/modules/task-spec.js";
+import { createReviewModule } from "./js/modules/review.js";
+import { createArtifactsModule } from "./js/modules/artifacts.js";
+
 const state = {
   tasks: [],
   runs: [],
@@ -5,11 +12,21 @@ const state = {
   taskSpec: null,
   taskConfig: null,
   originalTaskConfig: null,
+  runtimeCatalog: null,
+  runtimeAdvancedOpen: {},
+  llmSettings: null,
+  originalLlmSettings: null,
+  llmSettingsDirty: false,
+  llmSettingsSaving: false,
+  llmTestingProvider: null,
+  llmTestResults: {},
   configDirty: false,
   configSaving: false,
   isEditingTaskConfig: false,
-  activeTab: "task-spec",
+  activeTab: "run-control",
   promptView: "generator",
+  runtimeManualModelOpen: {},
+  scenarioAdvancedOpen: {},
   selectedRunId: null,
   selectedRun: null,
   selectedArtifactKey: null,
@@ -23,95 +40,9 @@ const state = {
   reviewLabels: [],
   reviewFilter: "all",
   loadingCommand: null,
+  deletingTaskName: null,
   deletingRunId: null,
-};
-
-const PIPELINE_STAGES = [
-  {
-    command: "generate",
-    stageKey: "generate",
-    label: "Generate",
-    shortLabel: "候选生成",
-    description: "创建新的 run，并产出带有 label_hint 的原始候选样本。",
-    actionHint: "这里的 label_hint 只是生成侧提示，不是正式标签，先确认 scenario matrix 与 generator prompt 是否覆盖目标样本空间。",
-  },
-  {
-    command: "classify",
-    stageKey: "classify",
-    label: "Classify",
-    shortLabel: "教师打标",
-    description: "让教师模型基于样本文本重新判定正式标签，并写入结构化 annotation。",
-    actionHint: "重点关注 parse_fail 和 teacher_label 的稳定性；这一层才是后续过滤、复核和评测使用的正式标注。",
-  },
-  {
-    command: "filter-export",
-    stageKey: "filter_export",
-    label: "Filter Export",
-    shortLabel: "过滤导出",
-    description: "去重、规则过滤，并拆出训练集、拒绝集和复核池。",
-    actionHint: "优先检查 rejected_samples 的损耗原因和 filtered_train 的纯度。",
-  },
-  {
-    command: "review-export",
-    stageKey: "review_export",
-    label: "Review Export",
-    shortLabel: "复核导出",
-    description: "导出人工复核候选，准备 review 闭环。",
-    actionHint: "导出后应尽快进入人工复核，不要让 run 卡在交接阶段。",
-  },
-  {
-    command: "validate-review",
-    stageKey: "validate_review",
-    label: "Validate Review",
-    shortLabel: "复核校验",
-    description: "校验 review_results 是否完整、合法、可进入 gold 构建。",
-    actionHint: "若这里失败，先修 review_results，再继续下游流程。",
-  },
-  {
-    command: "build-gold",
-    stageKey: "build_gold",
-    label: "Build Gold",
-    shortLabel: "冻结 Gold",
-    description: "把人工复核结果应用到样本，冻结 gold 和 hard cases。",
-    actionHint: "gold 是后续 eval 的基准，优先保证标签正确性而不是速度。",
-  },
-  {
-    command: "eval",
-    stageKey: "eval",
-    label: "Eval",
-    shortLabel: "评测分析",
-    description: "在 gold 集上重新预测，输出 summary 与 confusion 分析。",
-    actionHint: "完成后优先看 eval_summary、confusion_analysis 和 eval_predictions。",
-  },
-];
-
-const NEW_RUN_COMMANDS = new Set(["generate", "run-all"]);
-
-const REVIEW_DECISION_DETAILS = {
-  pending: {
-    label: "pending",
-    display: "待处理",
-    description: "暂不下最终结论，只保留这条复核记录，不改 human_label。",
-    requirement: "不会进入 gold，适合还要回看上下文或等待二次确认的样本。",
-  },
-  accepted: {
-    label: "accepted",
-    display: "接受教师标签",
-    description: "人工确认 teacher_label 正确，最终标签沿用教师结果。",
-    requirement: "会进入 gold；如果 Reviewer Label 留空，保存时会自动回填 teacher_label。",
-  },
-  corrected: {
-    label: "corrected",
-    display: "人工改标",
-    description: "人工认为 teacher_label 不对，并改成新的最终标签。",
-    requirement: "会进入 gold；必须填写 Reviewer Label，最终以人工标签为准。",
-  },
-  rejected: {
-    label: "rejected",
-    display: "拒绝样本",
-    description: "这条样本不应进入最终数据，通常因为样本质量或可判定性有问题。",
-    requirement: "不会进入 gold；必须填写 Comment，说明拒绝原因。",
-  },
+  creatingTask: false,
 };
 
 const taskListEl = document.getElementById("taskList");
@@ -147,6 +78,12 @@ const updatedAtValueEl = document.getElementById("updatedAtValue");
 const labelSummaryValueEl = document.getElementById("labelSummaryValue");
 const taskCountEl = document.getElementById("taskCount");
 const runCountEl = document.getElementById("runCount");
+const createTaskButton = document.getElementById("createTaskButton");
+const sidebarSettingsButton = document.getElementById("sidebarSettingsButton");
+const sidebarSettingsPillEl = document.getElementById("sidebarSettingsPill");
+const sidebarSettingsSummaryEl = document.getElementById("sidebarSettingsSummary");
+const sidebarSettingsMetricsEl = document.getElementById("sidebarSettingsMetrics");
+const sidebarRailFootEl = document.getElementById("sidebarRailFoot");
 const reviewerInputEl = document.getElementById("reviewerInput");
 const taskSpecOverviewEl = document.getElementById("taskSpecOverview");
 const taskSpecLabelsEl = document.getElementById("taskSpecLabels");
@@ -164,6 +101,12 @@ const taskConfigSummaryEl = document.getElementById("taskConfigSummary");
 const taskConfigImpactEl = document.getElementById("taskConfigImpact");
 const taskConfigStatusEl = document.getElementById("taskConfigStatus");
 const taskConfigAdviceEl = document.getElementById("taskConfigAdvice");
+const llmProviderGridEl = document.getElementById("llmProviderGrid");
+const llmDeckStatusEl = document.getElementById("llmDeckStatus");
+const llmDeckMetaEl = document.getElementById("llmDeckMeta");
+const addLlmProviderButton = document.getElementById("addLlmProviderButton");
+const reloadLlmSettingsButton = document.getElementById("reloadLlmSettingsButton");
+const saveLlmSettingsButton = document.getElementById("saveLlmSettingsButton");
 const taskMetaFormEl = document.getElementById("taskMetaForm");
 const taskRuntimeEditorEl = document.getElementById("taskRuntimeEditor");
 const taskRulesEditorEl = document.getElementById("taskRulesEditor");
@@ -190,6 +133,76 @@ const saveTaskConfigButton = document.getElementById("saveTaskConfigButton");
 const addScenarioButton = document.getElementById("addScenarioButton");
 const workbenchTabButtons = Array.from(document.querySelectorAll("[data-workbench-tab]"));
 const workbenchPanels = Array.from(document.querySelectorAll("[data-workbench-panel]"));
+
+const taskSpecModule = createTaskSpecModule({
+  state,
+  api,
+  elements: {
+    taskSpecReadViewEl,
+    taskSpecEditViewEl,
+    promptViewSwitchEl,
+    editTaskConfigButton,
+    resetTaskConfigButton,
+    saveTaskConfigButton,
+    reloadTaskConfigButton,
+    taskConfigAdviceEl,
+    addScenarioButton,
+    taskConfigStatusEl,
+    taskConfigSummaryEl,
+    taskConfigImpactEl,
+    llmProviderGridEl,
+    llmDeckStatusEl,
+    llmDeckMetaEl,
+    addLlmProviderButton,
+    reloadLlmSettingsButton,
+    saveLlmSettingsButton,
+    taskMetaFormEl,
+    taskRuntimeEditorEl,
+    taskRulesEditorEl,
+    taskExportsEditorEl,
+    taskLabelsEditorEl,
+    taskScenarioSummaryEl,
+    taskScenarioEditorEl,
+    taskPromptEditorEl,
+    taskDossierHeroEl,
+    taskSpecOverviewEl,
+    taskSpecLabelsEl,
+    taskSpecRulesEl,
+    taskSpecExportsEl,
+    taskRuntimeGridEl,
+    taskScenarioGridEl,
+    taskPromptMetaEl,
+    taskPromptPreviewEl,
+  },
+  callbacks: {
+    syncConfigDirty,
+    setConfigStatus,
+    setMessage,
+    loadTasks,
+    renderTasks,
+    renderSummary,
+    renderSidebarSettings,
+  },
+});
+
+const reviewModule = createReviewModule({
+  state,
+  api,
+  elements: {
+    reviewListEl,
+    reviewSummaryEl,
+    reviewerInputEl,
+    reloadReviewButton,
+    saveReviewButton,
+  },
+  callbacks: {
+    setMessage,
+    setCommandLoading,
+    loadRunDetails,
+  },
+});
+
+let artifactsModule;
 
 const ARTIFACT_EXPLANATIONS = {
   raw_candidates: {
@@ -401,39 +414,39 @@ const RECOMMENDED_ARTIFACTS_BY_STAGE = {
   eval: ["eval_export", "eval_result", "eval_summary", "confusion_analysis", "eval_predictions"],
 };
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const payload = await response.json();
-      detail = payload.detail || detail;
-    } catch {
-      // ignore
-    }
-    throw new Error(detail);
-  }
-
-  return response.json();
+function normalizeStageName(value) {
+  return String(value || "").replace(/_/g, "-");
 }
 
-function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
+artifactsModule = createArtifactsModule({
+  state,
+  api,
+  elements: {
+    artifactListEl,
+    artifactMetaEl,
+    artifactPreviewEl,
+    artifactStructuredViewEl,
+    artifactSummaryBarEl,
+    artifactExplainerEl,
+    artifactSearchInputEl,
+    artifactFilterSelectEl,
+    artifactViewSwitchEl,
+    rawCandidateViewSwitchEl,
+    rawCandidateGroupByFieldEl,
+    rawCandidateGroupBySelectEl,
+    reloadArtifactButton,
+  },
+  callbacks: {
+    setMessage,
+    getRecordSearchText,
+    buildSummaryChips,
+  },
+  dictionaries: {
+    artifactExplanations: ARTIFACT_EXPLANATIONS,
+    artifactCategoryMeta: ARTIFACT_CATEGORY_META,
+    recommendedArtifactsByStage: RECOMMENDED_ARTIFACTS_BY_STAGE,
+  },
+});
 
 function setMessage(text, type = "neutral") {
   messageBarEl.textContent = text;
@@ -446,76 +459,8 @@ function setMessage(text, type = "neutral") {
   }
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function formatArtifactValue(value) {
-  if (value == null || value === "") {
-    return "-";
-  }
-  if (Array.isArray(value)) {
-    return value.join(", ") || "-";
-  }
-  if (typeof value === "object") {
-    return JSON.stringify(value, null, 2);
-  }
-  return String(value);
-}
-
-function getRejectionReasonLabel(reason) {
-  const labels = {
-    empty_user_text: "用户文本为空",
-    parse_failed: "教师输出解析失败",
-    label_not_allowed: "标签不在允许范围",
-    text_too_short: "文本过短",
-    text_too_long: "文本过长",
-    rewrite_without_visible_report: "无可见报告却判为 rewrite_report",
-    historical_leakage: "与历史 gold/eval/hard_cases 冲突",
-  };
-  return labels[reason] || reason || "-";
-}
-
-function getReviewDecisionDetail(decision) {
-  return REVIEW_DECISION_DETAILS[decision] || REVIEW_DECISION_DETAILS.pending;
-}
-
-function renderReviewDecisionOptions(selectedDecision) {
-  return Object.values(REVIEW_DECISION_DETAILS)
-    .map(
-      (detail) => `
-        <option value="${escapeHtml(detail.label)}" ${selectedDecision === detail.label ? "selected" : ""}>
-          ${escapeHtml(`${detail.label} | ${detail.display}`)}
-        </option>
-      `
-    )
-    .join("");
-}
-
-function renderReviewDecisionGuide(selectedDecision) {
-  const active = getReviewDecisionDetail(selectedDecision);
-  return `
-    <div class="review-decision-active-note">
-      <div class="review-decision-item-head">
-        <strong>当前选择：${escapeHtml(`${active.label} | ${active.display}`)}</strong>
-      </div>
-      <p>${escapeHtml(active.description)}</p>
-      <span class="review-decision-item-note">${escapeHtml(active.requirement)}</span>
-    </div>
-  `;
-}
-
-function cloneData(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
 function syncConfigDirty() {
-  state.configDirty =
-    !!state.taskConfig && !!state.originalTaskConfig && JSON.stringify(state.taskConfig) !== JSON.stringify(state.originalTaskConfig);
+  state.configDirty = hasTaskConfigChanges(state.taskConfig, state.originalTaskConfig);
 }
 
 function setConfigStatus(text, type = "neutral") {
@@ -659,13 +604,24 @@ function getStageStatsPreview(run, stageKey) {
 }
 
 function buildRecommendedAction(task, run) {
+  if (state.activeTab === "settings") {
+    return {
+      title: "先校对 workspace 级模型入口",
+      body: "这里负责维护全局 provider、端点、密钥和默认模型。先做连通性测试，再回到 task runtime 里套用全局配置。",
+      meta: [
+        ["模式", "全局设置"],
+        ["建议", "保存后逐个做 probe"],
+      ],
+    };
+  }
+
   if (!task) {
     return {
       title: "先选择一个 task",
-      body: "左侧选中任务后，工作台会自动加载任务定义、运行历史、产物和 review 入口。",
+      body: "左侧选中任务后，工作台会自动加载任务配置、运行历史、产物和 review 入口。",
       meta: [
         ["模式", "探索工作台"],
-        ["建议", "先看任务定义，再决定是否启动新 run"],
+        ["建议", "先看任务配置，再决定是否启动新 run"],
       ],
     };
   }
@@ -673,19 +629,19 @@ function buildRecommendedAction(task, run) {
   if (state.activeTab === "task-spec") {
     if (state.isEditingTaskConfig) {
       return {
-        title: "先完成这份任务卷宗",
-        body: "当前在编辑 task 配置。优先校对 scenario、runtime、prompts 与 exports，确认无误后保存，再从本页发起新 run。",
+        title: "先完成这份任务配置",
+        body: "当前在编辑 task 配置。优先校对场景、模型、提示词和导出规则，确认无误后保存，再发起新的 run。",
         meta: [
-          ["模式", "任务定义 / 编辑"],
+          ["模式", "任务配置 / 编辑"],
           ["labels", String(task.labels?.length || 0)],
         ],
       };
     }
     return {
-      title: "任务定义是唯一的新建入口",
-      body: "先在本页确认 task 的主题、标签体系、scenario matrix 与 prompts，然后再用 generate 或 run-all 发起新的 run。",
+      title: "任务配置负责新建前准备",
+      body: "先确认标签、场景、模型和提示词，再用 generate 或 run-all 发起新的 run。",
       meta: [
-        ["模式", "任务定义 / 只读"],
+        ["模式", "任务配置 / 只读"],
         ["runs", String(task.run_count || 0)],
       ],
     };
@@ -693,10 +649,10 @@ function buildRecommendedAction(task, run) {
 
   if (!run) {
     return {
-      title: "先去任务定义页新建 run",
-      body: "“任务定义”页提供 task 级的新建 run 入口；首次验证整条链路优先用 run-all，只看生成质量再单独用 generate。",
+      title: "先去任务配置页新建 run",
+      body: "“任务配置”页提供 task 级的新建 run 入口；首次验证整条链路优先用 run-all，只看生成质量再单独用 generate。",
       meta: [
-        ["推荐入口", "任务定义 / run-all"],
+        ["推荐入口", "任务配置 / run-all"],
         ["当前状态", "尚未选择 run"],
       ],
     };
@@ -706,10 +662,10 @@ function buildRecommendedAction(task, run) {
   if (nextStage?.command === "generate") {
     return {
       title: "当前 run 尚未真正启动",
-      body: "generate 已移到“任务定义”页；如果这是空 run，建议直接删除它，再到“任务定义”页重新新建。",
+      body: "generate 已移到“任务配置”页；如果这是空 run，建议直接删除它，再到“任务配置”页重新新建。",
       meta: [
         ["当前进度", getProgressText(run)],
-        ["建议入口", "任务定义 / generate"],
+        ["建议入口", "任务配置 / generate"],
       ],
     };
   }
@@ -745,16 +701,28 @@ function renderOperationalNarrative() {
   const task = state.selectedTask;
   const run = state.selectedRun;
   const recommendation = buildRecommendedAction(task, run);
-  const taskScopedView = state.activeTab === "task-spec";
+  const taskScopedView = state.activeTab === "task-spec" || state.activeTab === "settings";
+  const contextMode = state.activeTab === "settings" ? "全局设置" : taskScopedView ? "任务配置" : run ? getProgressText(run) : "0/7 stages";
+  const providers = Array.isArray(state.llmSettings?.providers) ? state.llmSettings.providers : [];
+  const readyProviders = providers.filter((provider) => {
+    const config = provider?.config || {};
+    return provider?.name === "mock" || config.has_api_key || Boolean(String(config.api_key || "").trim());
+  }).length;
 
-  workspaceContextEl.innerHTML = buildSummaryChips([
-    ["theme", task?.theme || "-"],
-    ["type", task?.task_type || "-"],
-    ["language", task?.language || "-"],
-    ["labels", String(task?.labels?.length || 0)],
-    ["runs", String(task?.run_count || 0)],
-    [taskScopedView ? "mode" : "progress", taskScopedView ? "任务卷宗" : run ? getProgressText(run) : "0/7 stages"],
-  ]);
+  workspaceContextEl.innerHTML = state.activeTab === "settings"
+    ? buildSummaryChips([
+        ["providers", String(providers.length)],
+        ["ready", String(readyProviders)],
+        ["mode", contextMode],
+      ])
+    : buildSummaryChips([
+        ["theme", task?.theme || "-"],
+        ["type", task?.task_type || "-"],
+        ["language", task?.language || "-"],
+        ["labels", String(task?.labels?.length || 0)],
+        ["runs", String(task?.run_count || 0)],
+        [taskScopedView ? "mode" : "progress", contextMode],
+      ]);
 
   recommendedActionTitleEl.textContent = recommendation.title;
   recommendedActionBodyEl.textContent = recommendation.body;
@@ -844,12 +812,12 @@ function renderOperationalNarrative() {
     stageTimelineEl.innerHTML = '<div class="empty-state">选择 run 后显示阶段完成顺序与统计。</div>';
     runChecklistEl.innerHTML = `
       <article class="operator-note-card">
-        <strong>先确认任务定义</strong>
-        <span>进入“任务定义”页检查 labels、runtime、scenario matrix 和 prompts 是否符合当前目标。</span>
+        <strong>先确认任务配置</strong>
+        <span>进入“任务配置”页检查 labels、runtime、scenario matrix 和 prompts 是否符合当前目标。</span>
       </article>
       <article class="operator-note-card">
         <strong>首次执行建议</strong>
-        <span>当前页只负责推进已有 run；要新建 run，请切到“任务定义”页，首次跑通优先用 run-all。</span>
+        <span>当前页只负责推进已有 run；要新建 run，请切到“任务配置”页，首次跑通优先用 run-all。</span>
       </article>
     `;
     return;
@@ -879,7 +847,7 @@ function renderOperationalNarrative() {
     {
       title: "推荐动作",
       body: nextStage?.command === "generate"
-        ? "这是一条尚未启动的空 run。generate 已在“任务定义”页提供，通常应删除这条空 run 后重新新建。"
+        ? "这是一条尚未启动的空 run。generate 已在“任务配置”页提供，通常应删除这条空 run 后重新新建。"
         : nextStage
         ? `继续执行 ${nextStage.command}，避免 run 停留在 ${run.last_stage || "created"}。`
         : "这条 run 已完成全部阶段，建议转去产物页做评测结论确认。",
@@ -888,9 +856,9 @@ function renderOperationalNarrative() {
       title: "优先查看",
       body:
         !run.last_stage
-          ? "当前 run 还没有进入任何阶段；如果这是误创建的空 run，直接删除并到“任务定义”页重新新建。"
+          ? "当前 run 还没有进入任何阶段；如果这是误创建的空 run，直接删除并到“任务配置”页重新新建。"
           : run.last_stage === "generate"
-          ? "先看 raw_candidates，确认场景覆盖和 user_text 质量，但别把 label_hint 当成正式标签。"
+            ? "先看 raw_candidates，确认场景覆盖和 user_text 质量，但别把 label_hint 当成正式标签。"
           : run.last_stage === "classify"
             ? "先看 teacher_labeled，确认 parse_fail 是否可接受，并核对 teacher_label 是否符合真实分类边界。"
             : run.last_stage === "filter-export"
@@ -928,23 +896,8 @@ function renderOperationalNarrative() {
     .join("");
 }
 
-function renderKeyGrid(target, items) {
-  target.innerHTML = items
-    .map(
-      ([label, value]) => `
-        <div class="task-spec-key">
-          <strong>${escapeHtml(label)}</strong>
-          <span>${escapeHtml(formatArtifactValue(value))}</span>
-        </div>
-      `
-    )
-    .join("");
-}
-
 function renderPromptSwitch() {
-  promptViewSwitchEl.querySelectorAll("[data-prompt-view]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.promptView === state.promptView);
-  });
+  return taskSpecModule.renderPromptSwitch();
 }
 
 function renderWorkbenchTabs() {
@@ -958,1337 +911,79 @@ function renderWorkbenchTabs() {
   });
 }
 
+function renderSidebarSettings() {
+  const providers = Array.isArray(state.llmSettings?.providers) ? state.llmSettings.providers : [];
+  const readyCount = providers.filter((provider) => {
+    const config = provider?.config || {};
+    return provider?.name === "mock" || config.has_api_key || Boolean(String(config.api_key || "").trim());
+  }).length;
+  const probeResults = Object.values(state.llmTestResults || {}).filter((result) => result && typeof result === "object");
+  const lastProbe = probeResults[probeResults.length - 1];
+  const dirtyLabel = state.llmSettingsDirty ? "unsaved" : "clean";
+
+  sidebarSettingsButton.classList.toggle("is-active", state.activeTab === "settings");
+  sidebarSettingsPillEl.textContent = state.llmSettingsDirty ? "Dirty" : "Rail";
+  sidebarSettingsSummaryEl.textContent = providers.length
+    ? `${readyCount}/${providers.length} 个 provider 已具备可用凭据`
+    : "正在读取 provider 状态";
+  sidebarSettingsMetricsEl.innerHTML = `
+    <span><strong>providers</strong>${escapeHtml(providers.length ? String(providers.length) : "--")}</span>
+    <span><strong>ready</strong>${escapeHtml(providers.length ? String(readyCount) : "--")}</span>
+    <span><strong>probe</strong>${escapeHtml(
+      lastProbe ? (lastProbe.ok ? "最近一次通过" : "最近一次失败") : "未测试"
+    )}</span>
+  `;
+  sidebarRailFootEl.innerHTML = `
+    <span><strong>route</strong>${escapeHtml(state.activeTab === "settings" ? "settings" : "task workspace")}</span>
+    <span><strong>draft</strong>${escapeHtml(dirtyLabel)}</span>
+    <span><strong>focus</strong>${escapeHtml(
+      lastProbe ? `${lastProbe.provider || "llm"} ${lastProbe.ok ? "ok" : "error"}` : "workspace llm"
+    )}</span>
+  `;
+}
+
 function setActiveTab(tabName) {
   state.activeTab = tabName;
   renderWorkbenchTabs();
+  renderSidebarSettings();
   renderSummary();
 }
 
-function renderTaskSpecMode() {
-  const hasTask = !!state.taskSpec;
-  const editing = hasTask && state.isEditingTaskConfig;
-
-  taskSpecReadViewEl.hidden = editing;
-  taskSpecEditViewEl.hidden = !hasTask || !editing;
-  promptViewSwitchEl.hidden = !hasTask || editing;
-  editTaskConfigButton.hidden = !hasTask || editing;
-  resetTaskConfigButton.hidden = !editing;
-  saveTaskConfigButton.hidden = !editing;
-  reloadTaskConfigButton.hidden = !hasTask;
-  reloadTaskConfigButton.textContent = editing ? "从磁盘重载" : "重载配置";
-
-  if (!hasTask) {
-    taskConfigAdviceEl.textContent = "选择 task 后显示任务定义与配置入口。";
-    return;
-  }
-
-  taskConfigAdviceEl.textContent = editing
-    ? "你正在编辑真实配置文件。保存后只影响后续新 run，不会回写已有运行产物。"
-    : "当前为只读任务定义。点击“编辑配置”后进入独立编辑页面。";
-}
-
 function renderConfigStatusActions() {
-  const disabled = !state.taskConfig || state.configSaving;
-  renderTaskSpecMode();
-  reloadTaskConfigButton.disabled = !state.selectedTask || state.configSaving;
-  editTaskConfigButton.disabled = disabled;
-  resetTaskConfigButton.disabled = disabled;
-  saveTaskConfigButton.disabled = disabled || !state.configDirty;
-  addScenarioButton.disabled = disabled || !state.isEditingTaskConfig;
-}
-
-function renderConfigSummary() {
-  if (!state.taskConfig) {
-    taskConfigSummaryEl.innerHTML = "";
-    taskConfigImpactEl.innerHTML = "";
-    return;
-  }
-
-  renderKeyGrid(taskConfigSummaryEl, [
-    ["estimated_samples", totalEstimatedSamples(state.taskConfig.scenarios || [])],
-    ["labels", (state.taskConfig.labels || []).length],
-    ["scenarios", (state.taskConfig.scenarios || []).length],
-    ["generator_provider", state.taskConfig.runtime?.generator?.provider || "-"],
-    ["teacher_provider", state.taskConfig.runtime?.teacher?.provider || "-"],
-  ]);
-  renderKeyGrid(taskConfigImpactEl, [
-    ["generate", "受 scenario matrix 和 generator prompt 影响"],
-    ["classify", "受 labels、teacher prompt、teacher runtime 影响"],
-    ["filter-export", "受 rules 和 labels 影响"],
-    ["eval", "受 labels、eval runtime 与 gold 构建结果影响"],
-  ]);
-}
-
-function renderTaskMetaForm() {
-  if (!state.taskConfig) {
-    taskMetaFormEl.innerHTML = "";
-    return;
-  }
-  const task = state.taskConfig.task || {};
-  const fields = [
-    ["name", "Task Name", task.name],
-    ["theme", "Theme", task.theme],
-    ["language", "Language", task.language],
-    ["task_type", "Task Type", task.task_type],
-    ["entry_schema", "Entry Schema", task.entry_schema],
-  ];
-  taskMetaFormEl.innerHTML = fields
-    .map(
-      ([field, label, value]) => `
-        <label class="config-field">
-          <span>${escapeHtml(label)}</span>
-          <input data-config-section="task" data-config-key="${escapeHtml(field)}" type="text" value="${escapeHtml(
-            configInputValue(value)
-          )}" />
-        </label>
-      `
-    )
-    .join("");
-}
-
-function renderPrimitiveEditor(target, sectionName, payload) {
-  target.innerHTML = Object.entries(payload || {})
-    .map(
-      ([key, value]) => `
-        <label class="config-field">
-          <span>${escapeHtml(`${sectionName}.${key}`)}</span>
-          <input data-config-section="${escapeHtml(sectionName)}" data-config-key="${escapeHtml(key)}" type="text" value="${escapeHtml(
-            configInputValue(value)
-          )}" />
-        </label>
-      `
-    )
-    .join("");
-}
-
-function renderTaskRuntimeEditor() {
-  if (!state.taskConfig) {
-    taskRuntimeEditorEl.innerHTML = "";
-    return;
-  }
-  taskRuntimeEditorEl.innerHTML = Object.entries(state.taskConfig.runtime || {})
-    .map(
-      ([stage, config]) => `
-        <article class="config-runtime-card">
-          <h4>${escapeHtml(stage)}</h4>
-          <div class="config-form-grid">
-            ${Object.entries(config || {})
-              .map(
-                ([key, value]) => `
-                  <label class="config-field">
-                    <span>${escapeHtml(key)}</span>
-                    <input
-                      data-runtime-stage="${escapeHtml(stage)}"
-                      data-runtime-key="${escapeHtml(key)}"
-                      type="text"
-                      value="${escapeHtml(configInputValue(value))}"
-                    />
-                  </label>
-                `
-              )
-              .join("")}
-          </div>
-        </article>
-      `
-    )
-    .join("");
-}
-
-function renderTaskLabelsEditor() {
-  if (!state.taskConfig) {
-    taskLabelsEditorEl.innerHTML = "";
-    return;
-  }
-  const labels = state.taskConfig.labels || [];
-  taskLabelsEditorEl.innerHTML = `
-    <div class="config-chip-list">
-      ${labels
-        .map(
-          (label, index) => `
-            <span class="config-chip">
-              ${escapeHtml(label)}
-              <button class="config-chip-remove" data-label-index="${index}" type="button">移除</button>
-            </span>
-          `
-        )
-        .join("")}
-    </div>
-    <div class="config-inline-input">
-      <input id="newLabelInput" type="text" placeholder="新增 label，例如 summarize_report" />
-      <button class="ghost-button" id="addLabelButton" type="button">添加 Label</button>
-    </div>
-  `;
-}
-
-function renderTaskScenarioSummary() {
-  if (!state.taskConfig) {
-    taskScenarioSummaryEl.innerHTML = "";
-    return;
-  }
-  taskScenarioSummaryEl.innerHTML = buildSummaryChips([
-    ["scenarios", String((state.taskConfig.scenarios || []).length)],
-    ["estimated_samples", String(totalEstimatedSamples(state.taskConfig.scenarios || []))],
-    [
-      "high_risk",
-      String((state.taskConfig.scenarios || []).filter((scenario) => scenario.difficulty === "hard").length),
-    ],
-  ]);
-}
-
-function renderTaskScenarioEditor() {
-  if (!state.taskConfig) {
-    taskScenarioEditorEl.innerHTML = "";
-    return;
-  }
-  taskScenarioEditorEl.innerHTML = (state.taskConfig.scenarios || [])
-    .map((scenario, index) => {
-      const templates = (scenario.templates || []).join("\n");
-      const tags = (scenario.tags || []).join(", ");
-      return `
-        <article class="config-scenario-card" data-scenario-index="${index}">
-          <div class="config-section-head">
-            <div>
-              <h4>${escapeHtml(`Scenario ${index + 1}`)}</h4>
-              <p>预计生成 ${escapeHtml(String(estimateScenarioSamples(scenario)))} 条样本</p>
-            </div>
-            <button class="ghost-button" data-remove-scenario="${index}" type="button">删除</button>
-          </div>
-          <div class="config-form-grid">
-            <label class="config-field">
-              <span>intent</span>
-              <input data-scenario-field="intent" data-scenario-index="${index}" type="text" value="${escapeHtml(
-                configInputValue(scenario.intent)
-              )}" />
-            </label>
-            <label class="config-field">
-              <span>difficulty</span>
-              <input data-scenario-field="difficulty" data-scenario-index="${index}" type="text" value="${escapeHtml(
-                configInputValue(scenario.difficulty)
-              )}" />
-            </label>
-            <label class="config-field">
-              <span>generation_count</span>
-              <input data-scenario-field="generation_count" data-scenario-index="${index}" type="number" min="1" placeholder="留空则使用 templates 条数" value="${escapeHtml(
-                configInputValue(scenario.generation_count)
-              )}" />
-            </label>
-            <label class="config-field">
-              <span>tags</span>
-              <input data-scenario-field="tags" data-scenario-index="${index}" type="text" placeholder="逗号分隔" value="${escapeHtml(
-                configInputValue(tags)
-              )}" />
-            </label>
-            <label class="config-field">
-              <span>dialogue_stage</span>
-              <input data-scenario-context="dialogue_stage" data-scenario-index="${index}" type="text" value="${escapeHtml(
-                configInputValue(scenario.context?.dialogue_stage)
-              )}" />
-            </label>
-            <label class="config-field">
-              <span>language</span>
-              <input data-scenario-context="language" data-scenario-index="${index}" type="text" value="${escapeHtml(
-                configInputValue(scenario.context?.language)
-              )}" />
-            </label>
-            <label class="config-field config-field-toggle">
-              <span>has_visible_report</span>
-              <select data-scenario-context="has_visible_report" data-scenario-index="${index}">
-                <option value="true" ${scenario.context?.has_visible_report ? "selected" : ""}>true</option>
-                <option value="false" ${scenario.context?.has_visible_report ? "" : "selected"}>false</option>
-              </select>
-            </label>
-            <label class="config-field config-field-full">
-              <span>previous_report_summary</span>
-              <textarea data-scenario-context="previous_report_summary" data-scenario-index="${index}" rows="2">${escapeHtml(
-                configInputValue(scenario.context?.previous_report_summary)
-              )}</textarea>
-            </label>
-            <label class="config-field config-field-full">
-              <span>templates</span>
-              <textarea data-scenario-field="templates" data-scenario-index="${index}" rows="4" placeholder="每行一条模板">${escapeHtml(
-                templates
-              )}</textarea>
-            </label>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
-}
-
-function renderTaskPromptEditor() {
-  if (!state.taskConfig) {
-    taskPromptEditorEl.innerHTML = "";
-    return;
-  }
-  taskPromptEditorEl.innerHTML = `
-    <label class="config-field config-field-full">
-      <span>Generator Prompt</span>
-      <textarea data-prompt-field="generator_prompt" rows="10">${escapeHtml(
-        state.taskConfig.generator_prompt || ""
-      )}</textarea>
-    </label>
-    <label class="config-field config-field-full">
-      <span>Teacher Prompt</span>
-      <textarea data-prompt-field="teacher_prompt" rows="10">${escapeHtml(
-        state.taskConfig.teacher_prompt || ""
-      )}</textarea>
-    </label>
-  `;
-}
-
-function buildTaskSpecView() {
-  if (!state.taskSpec) {
-    return null;
-  }
-  if (!state.taskConfig) {
-    return state.taskSpec;
-  }
-  return {
-    ...state.taskSpec,
-    ...state.taskConfig.task,
-    runtime: state.taskConfig.runtime,
-    rules: state.taskConfig.rules,
-    exports: state.taskConfig.exports,
-    labels: state.taskConfig.labels,
-    scenarios: state.taskConfig.scenarios,
-    generator_prompt: state.taskConfig.generator_prompt,
-    teacher_prompt: state.taskConfig.teacher_prompt,
-  };
-}
-
-function renderTaskSpecReadOnly(view) {
-  const runCount = state.selectedTask?.run_count || 0;
-  const estimatedSamples = totalEstimatedSamples(state.taskConfig?.scenarios || view.scenarios || []);
-  taskDossierHeroEl.innerHTML = `
-    <div class="task-dossier-ribbon">Task Dossier</div>
-    <div class="task-dossier-grid">
-      <div>
-        <p class="task-dossier-eyebrow">${escapeHtml(view.task_type || "task")}</p>
-        <h3 class="task-dossier-title">${escapeHtml(view.name)}</h3>
-        <p class="task-dossier-copy">
-          这页只负责定义任务边界、样本空间与运行规范。run 是执行实例，不在这里混入状态推进。
-        </p>
-      </div>
-      <div class="task-dossier-matrix">
-        <span><strong>theme</strong>${escapeHtml(view.theme || "-")}</span>
-        <span><strong>language</strong>${escapeHtml(view.language || "-")}</span>
-        <span><strong>labels</strong>${escapeHtml(String((view.labels || []).length))}</span>
-        <span><strong>runs</strong>${escapeHtml(String(runCount))}</span>
-      </div>
-    </div>
-    <div class="task-dossier-foot">
-      <span>${escapeHtml(runCount ? `${runCount} 条运行记录可追溯` : "还没有 run，适合先校对定义后启动首轮")}</span>
-      <span>${escapeHtml(`estimated samples: ${estimatedSamples}`)}</span>
-    </div>
-  `;
-
-  renderKeyGrid(taskSpecOverviewEl, [
-    ["name", view.name],
-    ["theme", view.theme],
-    ["language", view.language],
-    ["task_type", view.task_type],
-    ["entry_schema", view.entry_schema],
-  ]);
-
-  taskSpecLabelsEl.innerHTML = (view.labels || [])
-    .map((label) => `<span class="task-spec-chip">${escapeHtml(label)}</span>`)
-    .join("");
-  renderKeyGrid(taskSpecRulesEl, Object.entries(view.rules || {}));
-  renderKeyGrid(taskSpecExportsEl, Object.entries(view.exports || {}));
-
-  taskRuntimeGridEl.innerHTML = Object.entries(view.runtime || {})
-    .map(
-      ([stage, config]) => `
-        <article class="task-runtime-card">
-          <h3>${escapeHtml(stage)}</h3>
-          <div class="task-runtime-meta">
-            ${Object.entries(config || {})
-              .map(
-                ([key, value]) =>
-                  `<span><strong>${escapeHtml(key)}</strong>: ${escapeHtml(formatArtifactValue(value))}</span>`
-              )
-              .join("")}
-          </div>
-        </article>
-      `
-    )
-    .join("");
-
-  taskScenarioGridEl.innerHTML = (view.scenarios || [])
-    .map(
-      (scenario, index) => `
-        <article class="task-scenario-card">
-          <h3>${escapeHtml(`${index + 1}. ${scenario.intent}`)}</h3>
-          <div class="task-spec-chip-group">
-            <span class="task-spec-chip">${escapeHtml(scenario.difficulty || "-")}</span>
-            ${(scenario.tags || []).map((tag) => `<span class="task-spec-chip">${escapeHtml(tag)}</span>`).join("")}
-          </div>
-          <p>${escapeHtml((scenario.templates || []).join(" / "))}</p>
-          <div class="task-spec-key-grid">
-            <div class="task-spec-key">
-              <strong>has_visible_report</strong>
-              <span>${escapeHtml(formatArtifactValue(scenario.context?.has_visible_report))}</span>
-            </div>
-            <div class="task-spec-key">
-              <strong>dialogue_stage</strong>
-              <span>${escapeHtml(formatArtifactValue(scenario.context?.dialogue_stage))}</span>
-            </div>
-            <div class="task-spec-key">
-              <strong>previous_report_summary</strong>
-              <span>${escapeHtml(formatArtifactValue(scenario.context?.previous_report_summary))}</span>
-            </div>
-          </div>
-        </article>
-      `
-    )
-    .join("");
-
-  const promptText = state.promptView === "generator" ? view.generator_prompt : view.teacher_prompt;
-  const runtimeConfig = state.promptView === "generator" ? view.runtime?.generator : view.runtime?.teacher;
-  taskPromptMetaEl.innerHTML = buildSummaryChips([
-    ["view", `${state.promptView}_prompt`],
-    ["provider", runtimeConfig?.provider || "-"],
-    ["model", runtimeConfig?.model || "-"],
-  ]);
-  taskPromptPreviewEl.textContent = promptText || "暂无 prompt";
+  return taskSpecModule.renderConfigStatusActions();
 }
 
 function renderTaskSpec() {
-  if (!state.taskSpec) {
-    taskDossierHeroEl.innerHTML = '<div class="empty-state">选择 task 后显示任务卷宗。</div>';
-    taskSpecOverviewEl.innerHTML = '<div class="empty-state">选择 task 后显示任务定义。</div>';
-    taskSpecLabelsEl.innerHTML = "";
-    taskSpecRulesEl.innerHTML = "";
-    taskSpecExportsEl.innerHTML = "";
-    taskRuntimeGridEl.innerHTML = "";
-    taskScenarioGridEl.innerHTML = '<div class="empty-state">暂无 scenario。</div>';
-    taskPromptMetaEl.innerHTML = "";
-    taskPromptPreviewEl.textContent = "选择 task 后显示 prompt";
-    taskConfigSummaryEl.innerHTML = "";
-    taskConfigImpactEl.innerHTML = "";
-    taskMetaFormEl.innerHTML = "";
-    taskRuntimeEditorEl.innerHTML = "";
-    taskRulesEditorEl.innerHTML = "";
-    taskExportsEditorEl.innerHTML = "";
-    taskLabelsEditorEl.innerHTML = "";
-    taskScenarioSummaryEl.innerHTML = "";
-    taskScenarioEditorEl.innerHTML = "";
-    taskPromptEditorEl.innerHTML = "";
-    setConfigStatus("选择 task 后显示可编辑配置");
-    renderConfigStatusActions();
-    renderPromptSwitch();
-    return;
-  }
-  renderTaskSpecReadOnly(buildTaskSpecView());
-  renderConfigSummary();
-  renderTaskMetaForm();
-  renderTaskRuntimeEditor();
-  renderPrimitiveEditor(taskRulesEditorEl, "rules", state.taskConfig?.rules || {});
-  renderPrimitiveEditor(taskExportsEditorEl, "exports", state.taskConfig?.exports || {});
-  renderTaskLabelsEditor();
-  renderTaskScenarioSummary();
-  renderTaskScenarioEditor();
-  renderTaskPromptEditor();
-  renderConfigStatusActions();
-  renderPromptSwitch();
-}
-
-function renderArtifactSummary(payload, records) {
-  if (!payload) {
-    artifactSummaryBarEl.innerHTML = "";
-    return;
-  }
-
-  const total = Array.isArray(payload.content) ? payload.content.length : null;
-  const visible = Array.isArray(payload.content) ? records.length : null;
-  const summary = [["visible", visible], ["total", total]];
-
-  if (payload.key === "teacher_labeled") {
-    const parseFailures = records.filter((record) => record.annotation?.parse_ok === false).length;
-    summary.push(["parse_fail", parseFailures]);
-  }
-  if (payload.key === "review_candidates" || payload.key === "review_results") {
-    summary.push(["accepted", records.filter((record) => record.review_decision === "accepted").length]);
-    summary.push(["corrected", records.filter((record) => record.review_decision === "corrected").length]);
-    summary.push(["rejected", records.filter((record) => record.review_decision === "rejected").length]);
-  }
-  if (payload.key === "eval_predictions") {
-    const mismatches = records.filter((record) => record.expected_label !== record.predicted_label).length;
-    const parseFailures = records.filter((record) => record.parse_ok === false).length;
-    summary.push(["mismatch", mismatches]);
-    summary.push(["parse_fail", parseFailures]);
-  }
-  if (payload.key === "eval_result") {
-    const metrics = payload.content?.metrics || {};
-    const quality = payload.content?.quality || {};
-    const promptfoo = payload.content?.promptfoo?.summary || {};
-    summary.push(["accuracy", metrics.overall_accuracy]);
-    summary.push(["macro_f1", metrics.macro_f1]);
-    summary.push(["parse_fail", quality.parse_failure_count]);
-    if (promptfoo.pass_rate != null) {
-      summary.push(["promptfoo_pass", promptfoo.pass_rate]);
-    }
-  }
-  if (payload.key === "gold_eval") {
-    const hardCases = records.filter(
-      (record) =>
-        record.metadata?.difficulty === "hard" || (record.metadata?.tags || []).includes("ambiguous")
-    ).length;
-    summary.push(["hard", hardCases]);
-  }
-  if (payload.key === "rejected_samples") {
-    const reasonCounts = new Map();
-    for (const record of records) {
-      const reason = record.rejection_reason || "unknown";
-      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
-    }
-    Array.from(reasonCounts.entries())
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, 4)
-      .forEach(([reason, count]) => {
-        summary.push([getRejectionReasonLabel(reason), count]);
-      });
-  }
-
-  artifactSummaryBarEl.innerHTML = buildSummaryChips(summary);
-}
-
-function renderArtifactExplanation(payload) {
-  if (!payload) {
-    artifactExplainerEl.innerHTML =
-      '<div class="empty-state">选择左侧产物后显示该文件在流程中的作用、用途和阅读建议。</div>';
-    return;
-  }
-
-  const explanation = ARTIFACT_EXPLANATIONS[payload.key] || {
-    stage: payload.category || "-",
-    role: "该文件是当前 run 的中间产物或报告文件。",
-    usage: "用于理解当前阶段的输出结果。",
-    readingHint: "结合文件内容和顶部摘要一起阅读。",
-  };
-
-  artifactExplainerEl.innerHTML = `
-    <article class="artifact-explainer-card">
-      <div class="artifact-record-header">
-        <div>
-          <h3>${escapeHtml(payload.key)}</h3>
-          <p>${escapeHtml(explanation.role)}</p>
-        </div>
-        <span class="artifact-chip">${escapeHtml(explanation.stage)}</span>
-      </div>
-      <div class="artifact-explainer-grid">
-        <div class="artifact-detail-block">
-          <strong>作用</strong>
-          <span>${escapeHtml(explanation.role)}</span>
-        </div>
-        <div class="artifact-detail-block">
-          <strong>典型用途</strong>
-          <span>${escapeHtml(explanation.usage)}</span>
-        </div>
-        <div class="artifact-detail-block artifact-detail-block-wide">
-          <strong>阅读建议</strong>
-          <span>${escapeHtml(explanation.readingHint)}</span>
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-function getArtifactFilterOptions(payload) {
-  const key = payload?.key;
-  if (key === "raw_candidates") {
-    const records = Array.isArray(payload?.content) ? payload.content : [];
-    const labelHints = Array.from(
-      new Set(records.map((record) => record.metadata?.label_hint).filter(Boolean))
-    ).sort();
-    return [
-      { value: "all", label: "全部" },
-      { value: "with_report", label: "仅有报告" },
-      { value: "without_report", label: "仅无报告" },
-      ...labelHints.map((label) => ({ value: `label:${label}`, label: `label: ${label}` })),
-    ];
-  }
-  if (key === "teacher_labeled") {
-    return [
-      { value: "all", label: "全部" },
-      { value: "parse_failures", label: "仅解析失败" },
-      { value: "parse_ok", label: "仅解析成功" },
-    ];
-  }
-  if (key === "review_candidates" || key === "review_results") {
-    return [
-      { value: "all", label: "全部" },
-      { value: "pending", label: "仅 pending" },
-      { value: "accepted", label: "仅 accepted" },
-      { value: "corrected", label: "仅 corrected" },
-      { value: "rejected", label: "仅 rejected" },
-    ];
-  }
-  if (key === "eval_predictions") {
-    return [
-      { value: "all", label: "全部" },
-      { value: "mismatch", label: "仅预测错误" },
-      { value: "parse_failures", label: "仅解析失败" },
-    ];
-  }
-  if (key === "gold_eval") {
-    return [
-      { value: "all", label: "全部" },
-      { value: "hard", label: "仅 hard" },
-    ];
-  }
-  if (key === "rejected_samples") {
-    const records = Array.isArray(payload?.content) ? payload.content : [];
-    const reasons = Array.from(new Set(records.map((record) => record.rejection_reason).filter(Boolean))).sort();
-    return [
-      { value: "all", label: "全部" },
-      ...reasons.map((reason) => ({ value: `reason:${reason}`, label: getRejectionReasonLabel(reason) })),
-    ];
-  }
-  return [{ value: "all", label: "全部" }];
-}
-
-function recordPassesFilter(record, payload) {
-  const filter = state.artifactFilter;
-  if (!filter || filter === "all") {
-    return true;
-  }
-  const key = payload.key;
-  if (key === "raw_candidates") {
-    if (filter === "with_report") {
-      return record.context?.has_visible_report === true;
-    }
-    if (filter === "without_report") {
-      return record.context?.has_visible_report === false;
-    }
-    if (filter.startsWith("label:")) {
-      return record.metadata?.label_hint === filter.slice("label:".length);
-    }
-  }
-  if (key === "teacher_labeled") {
-    if (filter === "parse_failures") {
-      return record.annotation?.parse_ok === false;
-    }
-    if (filter === "parse_ok") {
-      return record.annotation?.parse_ok === true;
-    }
-  }
-  if (key === "review_candidates" || key === "review_results") {
-    return record.review_decision === filter;
-  }
-  if (key === "eval_predictions") {
-    if (filter === "mismatch") {
-      return record.expected_label !== record.predicted_label;
-    }
-    if (filter === "parse_failures") {
-      return record.parse_ok === false;
-    }
-  }
-  if (key === "gold_eval" && filter === "hard") {
-    return record.metadata?.difficulty === "hard" || (record.metadata?.tags || []).includes("ambiguous");
-  }
-  if (key === "rejected_samples" && filter.startsWith("reason:")) {
-    return record.rejection_reason === filter.slice("reason:".length);
-  }
-  return true;
-}
-
-function getFilteredArtifactRecords(payload) {
-  const records = Array.isArray(payload?.content) ? payload.content : [];
-  const query = state.artifactSearch.trim().toLowerCase();
-  return records.filter((record) => {
-    if (!recordPassesFilter(record, payload)) {
-      return false;
-    }
-    if (!query) {
-      return true;
-    }
-    return getRecordSearchText(record).includes(query);
-  });
-}
-
-function renderArtifactFilterOptions(payload) {
-  const options = getArtifactFilterOptions(payload);
-  if (!options.some((item) => item.value === state.artifactFilter)) {
-    state.artifactFilter = "all";
-  }
-  artifactFilterSelectEl.innerHTML = options
-    .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
-    .join("");
-  artifactFilterSelectEl.value = state.artifactFilter;
-}
-
-function renderRawCandidateControls(payload) {
-  const enabled = payload?.key === "raw_candidates" && state.artifactViewMode === "structured";
-  const categoryMode = enabled && state.rawCandidateViewMode === "category";
-  rawCandidateViewSwitchEl.hidden = !enabled;
-  rawCandidateGroupByFieldEl.hidden = !categoryMode;
-  if (!enabled) {
-    return;
-  }
-  rawCandidateViewSwitchEl.querySelectorAll("[data-raw-candidate-view]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.rawCandidateView === state.rawCandidateViewMode);
-  });
-  rawCandidateGroupBySelectEl.value = state.rawCandidateGroupBy;
+  return taskSpecModule.renderTaskSpec();
 }
 
 function renderArtifactViewSwitch() {
-  artifactViewSwitchEl.querySelectorAll("[data-artifact-view]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.artifactView === state.artifactViewMode);
-  });
-  const rawMode = state.artifactViewMode === "raw";
-  artifactPreviewEl.hidden = !rawMode;
-  artifactStructuredViewEl.hidden = rawMode;
-  renderRawCandidateControls(state.artifactPayload);
+  artifactsModule.renderArtifactViewSwitch();
 }
 
 function getVisibleArtifacts(run) {
-  return (run?.artifacts || []).filter(
-    (artifact) => artifact.exists && !artifact.key.endsWith("_manifest")
-  );
-}
-
-function getArtifactCategoryInfo(category) {
-  return ARTIFACT_CATEGORY_META[category] || {
-    label: category || "Artifacts",
-    description: "当前阶段产物。",
-  };
-}
-
-function getRecommendedArtifactKeys(run) {
-  if (!run?.last_stage) {
-    return ["raw_candidates"];
-  }
-  return RECOMMENDED_ARTIFACTS_BY_STAGE[run.last_stage] || [];
-}
-
-function shortenText(value, limit = 72) {
-  const text = String(value || "").trim();
-  if (!text) {
-    return "";
-  }
-  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
-}
-
-function getArtifactListHint(artifact) {
-  const explanation = ARTIFACT_EXPLANATIONS[artifact.key];
-  if (!explanation) {
-    return shortenText(artifact.relative_path, 54);
-  }
-  return shortenText(explanation.readingHint || explanation.usage || explanation.role, 72);
-}
-
-function groupArtifactsByCategory(artifacts) {
-  const groups = new Map();
-  for (const artifact of artifacts) {
-    const category = artifact.category || "other";
-    if (!groups.has(category)) {
-      groups.set(category, []);
-    }
-    groups.get(category).push(artifact);
-  }
-  const order = ["raw", "processed", "gold", "exports", "reports", "other"];
-  return Array.from(groups.entries()).sort((left, right) => order.indexOf(left[0]) - order.indexOf(right[0]));
-}
-
-function buildDetailBlocks(items) {
-  const visibleItems = items.filter(([, value]) => value != null && value !== "");
-  if (!visibleItems.length) {
-    return "";
-  }
-  return `
-    <div class="artifact-detail-grid">
-      ${visibleItems
-        .map(
-          ([label, value]) => `
-            <div class="artifact-detail-block">
-              <strong>${escapeHtml(label)}</strong>
-              <span>${escapeHtml(formatArtifactValue(value))}</span>
-            </div>
-          `
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function summarizeEvalPredictions(records) {
-  const confusion = new Map();
-  for (const record of records) {
-    const expected = record.expected_label || "-";
-    const predicted = record.predicted_label || "-";
-    const key = `${expected}→${predicted}`;
-    confusion.set(key, (confusion.get(key) || 0) + 1);
-  }
-  return Array.from(confusion.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6);
-}
-
-function getRawCandidateUserText(record) {
-  return record.user_text || record.input?.user_text || "-";
-}
-
-function getRawCandidateGroupValue(record, groupBy) {
-  if (groupBy === "difficulty") {
-    return record.metadata?.difficulty || "unknown";
-  }
-  if (groupBy === "has_visible_report") {
-    return record.context?.has_visible_report ? "has_report" : "no_report";
-  }
-  if (groupBy === "dialogue_stage") {
-    return record.context?.dialogue_stage || "unknown";
-  }
-  return record.metadata?.label_hint || "unknown";
-}
-
-function renderRawCandidatesStructured(payload) {
-  const records = getFilteredArtifactRecords(payload);
-  renderArtifactSummary(payload, records);
-  if (!records.length) {
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">没有匹配当前搜索或筛选条件的记录。</div>';
-    return;
-  }
-
-  if (state.rawCandidateViewMode === "category") {
-    const grouped = new Map();
-    for (const record of records) {
-      const key = getRawCandidateGroupValue(record, state.rawCandidateGroupBy);
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      grouped.get(key).push(record);
-    }
-    const groups = Array.from(grouped.entries()).sort((left, right) => right[1].length - left[1].length);
-    artifactStructuredViewEl.innerHTML = `
-      <div class="artifact-diagnostic-panel">
-        <div class="artifact-summary-grid">
-          ${groups
-            .map(
-              ([group, items]) => `
-                <article class="artifact-summary-card">
-                  <h3>${escapeHtml(group)}</h3>
-                  <strong>${escapeHtml(items.length)}</strong>
-                  <span>${escapeHtml(state.rawCandidateGroupBy)}</span>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-        <div class="artifact-category-grid">
-          ${groups
-            .map(
-              ([group, items]) => `
-                <article class="artifact-category-card">
-                  <div class="artifact-record-header">
-                    <h3>${escapeHtml(group)}</h3>
-                    <span class="artifact-chip">${escapeHtml(`${items.length} 条`)}</span>
-                  </div>
-                  <div class="artifact-table-wrap">
-                    <table class="artifact-table">
-                      <thead>
-                        <tr>
-                          <th>ID</th>
-                          <th>User Text</th>
-                          <th>difficulty</th>
-                          <th>has_report</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${items
-                          .map(
-                            (record) => `
-                              <tr>
-                                <td><code>${escapeHtml(record.id || "-")}</code></td>
-                                <td><code>${escapeHtml(getRawCandidateUserText(record))}</code></td>
-                                <td>${escapeHtml(record.metadata?.difficulty || "-")}</td>
-                                <td>${escapeHtml(record.context?.has_visible_report ? "true" : "false")}</td>
-                              </tr>
-                            `
-                          )
-                          .join("")}
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-      </div>
-    `;
-    return;
-  }
-
-  artifactStructuredViewEl.innerHTML = `
-    <div class="artifact-diagnostic-panel">
-      <div class="artifact-table-wrap">
-        <h3>Raw Candidate Rows</h3>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>User Text</th>
-              <th>label_hint</th>
-              <th>difficulty</th>
-              <th>has_report</th>
-              <th>dialogue_stage</th>
-              <th>tags</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${records
-              .map(
-                (record) => `
-                  <tr>
-                    <td><code>${escapeHtml(record.id || "-")}</code></td>
-                    <td><code>${escapeHtml(getRawCandidateUserText(record))}</code></td>
-                    <td>${escapeHtml(record.metadata?.label_hint || "-")}</td>
-                    <td>${escapeHtml(record.metadata?.difficulty || "-")}</td>
-                    <td>${escapeHtml(record.context?.has_visible_report ? "true" : "false")}</td>
-                    <td>${escapeHtml(record.context?.dialogue_stage || "-")}</td>
-                    <td>${escapeHtml((record.metadata?.tags || []).join(", ") || "-")}</td>
-                  </tr>
-                `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderRejectedSamplesStructured(payload) {
-  const records = getFilteredArtifactRecords(payload);
-  renderArtifactSummary(payload, records);
-  if (!records.length) {
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">没有匹配当前搜索或筛选条件的记录。</div>';
-    return;
-  }
-
-  const grouped = new Map();
-  for (const record of records) {
-    const reason = record.rejection_reason || "unknown";
-    if (!grouped.has(reason)) {
-      grouped.set(reason, []);
-    }
-    grouped.get(reason).push(record);
-  }
-  const groups = Array.from(grouped.entries()).sort((left, right) => right[1].length - left[1].length);
-
-  artifactStructuredViewEl.innerHTML = `
-    <div class="artifact-diagnostic-panel">
-      <div class="artifact-summary-grid">
-        ${groups
-          .map(
-            ([reason, items]) => `
-              <article class="artifact-summary-card">
-                <h3>${escapeHtml(getRejectionReasonLabel(reason))}</h3>
-                <strong>${escapeHtml(items.length)}</strong>
-                <span>rejection_reason</span>
-              </article>
-            `
-          )
-          .join("")}
-      </div>
-      <div class="artifact-table-wrap">
-        <h3>Rejected Rows</h3>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>User Text</th>
-              <th>Reason</th>
-              <th>teacher_label</th>
-              <th>parse</th>
-              <th>has_report</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${records
-              .map(
-                (record) => `
-                  <tr class="is-alert">
-                    <td><code>${escapeHtml(record.id || "-")}</code></td>
-                    <td><code>${escapeHtml(record.user_text || record.input?.user_text || "-")}</code></td>
-                    <td>${escapeHtml(getRejectionReasonLabel(record.rejection_reason))}</td>
-                    <td>${escapeHtml(record.annotation?.teacher_label || "-")}</td>
-                    <td>${escapeHtml(record.annotation?.parse_ok ? "ok" : "fail")}</td>
-                    <td>${escapeHtml(record.context?.has_visible_report ? "true" : "false")}</td>
-                  </tr>
-                `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-      <div class="artifact-card-grid">
-        ${records.map((record) => buildArtifactRecordCard(record, payload)).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderEvalPredictionsStructured(payload) {
-  const records = getFilteredArtifactRecords(payload);
-  renderArtifactSummary(payload, records);
-  if (!records.length) {
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">没有匹配当前搜索或筛选条件的记录。</div>';
-    return;
-  }
-
-  const sorted = [...records].sort((left, right) => {
-    const leftBad = left.expected_label !== left.predicted_label || left.parse_ok === false ? 1 : 0;
-    const rightBad = right.expected_label !== right.predicted_label || right.parse_ok === false ? 1 : 0;
-    return rightBad - leftBad;
-  });
-  const confusion = summarizeEvalPredictions(sorted);
-  const mismatches = sorted.filter((item) => item.expected_label !== item.predicted_label);
-  const parseFailures = sorted.filter((item) => item.parse_ok === false);
-
-  artifactStructuredViewEl.innerHTML = `
-    <div class="artifact-diagnostic-panel">
-      <div class="artifact-confusion-grid">
-        <article class="artifact-confusion-card">
-          <h3>Confusion Topline</h3>
-          <div class="artifact-confusion-list">
-            ${confusion
-              .map(
-                ([pair, count]) => `
-                  <div class="artifact-confusion-item">
-                    <span>${escapeHtml(pair)}</span>
-                    <strong>${escapeHtml(count)}</strong>
-                  </div>
-                `
-              )
-              .join("")}
-          </div>
-        </article>
-        <article class="artifact-confusion-card">
-          <h3>Error Focus</h3>
-          <div class="artifact-confusion-list">
-            <div class="artifact-confusion-item"><span>mismatch</span><strong>${escapeHtml(mismatches.length)}</strong></div>
-            <div class="artifact-confusion-item"><span>parse_fail</span><strong>${escapeHtml(parseFailures.length)}</strong></div>
-            <div class="artifact-confusion-item"><span>visible rows</span><strong>${escapeHtml(sorted.length)}</strong></div>
-          </div>
-        </article>
-      </div>
-      <div class="artifact-table-wrap">
-        <h3>Prediction Rows</h3>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>Sample</th>
-              <th>Expected</th>
-              <th>Predicted</th>
-              <th>Parse</th>
-              <th>User Text</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${sorted
-              .map((record) => {
-                const isAlert = record.expected_label !== record.predicted_label || record.parse_ok === false;
-                return `
-                  <tr class="${isAlert ? "is-alert" : "is-good"}">
-                    <td><code>${escapeHtml(record.id || "-")}</code></td>
-                    <td>${escapeHtml(record.expected_label || "-")}</td>
-                    <td>${escapeHtml(record.predicted_label || "-")}</td>
-                    <td>${escapeHtml(record.parse_ok ? "ok" : "fail")}</td>
-                    <td><code>${escapeHtml(record.user_text || "-")}</code></td>
-                  </tr>
-                `;
-              })
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-      <div class="artifact-card-grid">
-        ${sorted.map((record) => buildArtifactRecordCard(record, payload)).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function buildArtifactRecordCard(record, payload) {
-  const key = payload.key;
-  const title = record.sample_id || record.id || record.run_id || payload.key;
-  let summary = record.user_text || record.input?.user_text || record.raw_output || record.review_comment || "";
-  const chips = [];
-  const metrics = [];
-  const details = [];
-  let cardClassName = "artifact-record";
-
-  if (key === "raw_candidates") {
-    chips.push(record.context?.has_visible_report ? "has report" : "no report");
-    chips.push(record.metadata?.difficulty || "-");
-    metrics.push(["label_hint", record.metadata?.label_hint]);
-    metrics.push(["tags", formatArtifactValue(record.metadata?.tags || [])]);
-    details.push(["previous_report_summary", record.context?.previous_report_summary]);
-    details.push(["dialogue_stage", record.context?.dialogue_stage]);
-  } else if (key === "rejected_samples") {
-    chips.push("rejected");
-    metrics.push(["rejection_reason", getRejectionReasonLabel(record.rejection_reason)]);
-    metrics.push(["teacher_label", record.annotation?.teacher_label]);
-    metrics.push(["parse_ok", record.annotation?.parse_ok]);
-    details.push(["user_text", record.input?.user_text]);
-    details.push(["difficulty", record.metadata?.difficulty]);
-    details.push(["has_visible_report", record.context?.has_visible_report]);
-    cardClassName += " is-alert";
-  } else if (key === "teacher_labeled") {
-    const parseOk = record.annotation?.parse_ok;
-    chips.push(parseOk ? "parse_ok" : "parse_fail");
-    metrics.push(["teacher_label", record.annotation?.teacher_label]);
-    metrics.push(["error_code", record.annotation?.error_code]);
-    metrics.push(["review_status", record.annotation?.review_status]);
-    details.push(["raw_output", record.annotation?.teacher_raw_output]);
-    details.push(["difficulty", record.metadata?.difficulty]);
-    if (parseOk === false) {
-      cardClassName += " is-alert";
-    }
-  } else if (key === "review_candidates" || key === "review_results") {
-    chips.push(record.review_decision || "pending");
-    metrics.push(["teacher_label", record.teacher_label]);
-    metrics.push(["reviewer_label", record.reviewer_label]);
-    metrics.push(["reviewed_by", record.reviewed_by]);
-    details.push(["review_comment", record.review_comment]);
-    details.push(["reviewed_at", record.reviewed_at]);
-  } else if (key === "gold_eval") {
-    chips.push(record.annotation?.review_status || "gold");
-    metrics.push(["final_label", record.annotation?.final_label]);
-    metrics.push(["teacher_label", record.annotation?.teacher_label]);
-    metrics.push(["difficulty", record.metadata?.difficulty]);
-    details.push(["tags", formatArtifactValue(record.metadata?.tags || [])]);
-    details.push(["human_label", record.annotation?.human_label]);
-  } else if (key === "eval_predictions") {
-    const match = record.expected_label === record.predicted_label;
-    chips.push(match ? "matched" : "mismatch");
-    chips.push(record.parse_ok ? "parse_ok" : "parse_fail");
-    metrics.push(["expected", record.expected_label]);
-    metrics.push(["predicted", record.predicted_label]);
-    metrics.push(["error_code", record.error_code]);
-    details.push(["raw_output", record.raw_output]);
-    details.push(["difficulty", record.difficulty]);
-    details.push(["tags", formatArtifactValue(record.tags || [])]);
-    if (!match || record.parse_ok === false) {
-      cardClassName += " is-alert";
-    } else {
-      cardClassName += " is-good";
-    }
-  } else {
-    metrics.push(...Object.entries(record).slice(0, 4));
-  }
-
-  const chipMarkup = chips
-    .filter(Boolean)
-    .map((chip) => {
-      let className = "artifact-chip";
-      if (chip === "parse_fail" || chip === "mismatch" || chip === "rejected") {
-        className += " is-alert";
-      } else if (chip === "parse_ok" || chip === "matched" || chip === "accepted") {
-        className += " is-good";
-      }
-      return `<span class="${className}">${escapeHtml(chip)}</span>`;
-    })
-    .join("");
-
-  const metricMarkup = metrics
-    .filter(([, value]) => value != null && value !== "")
-    .map(([label, value]) => `<span><strong>${escapeHtml(label)}</strong>: ${escapeHtml(formatArtifactValue(value))}</span>`)
-    .join("");
-
-  return `
-    <article class="${cardClassName}">
-      <div class="artifact-record-header">
-        <h3>${escapeHtml(title)}</h3>
-      </div>
-      ${summary ? `<p>${escapeHtml(summary)}</p>` : ""}
-      ${chipMarkup ? `<div class="artifact-chip-row">${chipMarkup}</div>` : ""}
-      ${metricMarkup ? `<div class="artifact-card-metrics">${metricMarkup}</div>` : ""}
-      ${buildDetailBlocks(details)}
-    </article>
-  `;
-}
-
-function renderArtifactJsonlStructured(payload) {
-  if (payload.key === "raw_candidates") {
-    renderRawCandidatesStructured(payload);
-    return;
-  }
-  if (payload.key === "rejected_samples") {
-    renderRejectedSamplesStructured(payload);
-    return;
-  }
-  if (payload.key === "eval_predictions") {
-    renderEvalPredictionsStructured(payload);
-    return;
-  }
-  const records = getFilteredArtifactRecords(payload);
-  renderArtifactSummary(payload, records);
-  if (!records.length) {
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">没有匹配当前搜索或筛选条件的记录。</div>';
-    return;
-  }
-  artifactStructuredViewEl.innerHTML = `<div class="artifact-card-grid">${records
-    .map((record) => buildArtifactRecordCard(record, payload))
-    .join("")}</div>`;
-}
-
-function renderArtifactJsonStructured(payload) {
-  const object = payload.content;
-  renderArtifactSummary(payload, []);
-  if (object == null) {
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">文件不存在。</div>';
-    return;
-  }
-  if (payload.key === "eval_result") {
-    const topConfusions = (object.quality?.top_confusions || [])
-      .map(
-        (item) =>
-          `<tr><td>${escapeHtml(item.expected)}</td><td>${escapeHtml(item.predicted)}</td><td>${escapeHtml(
-            String(item.count)
-          )}</td></tr>`
-      )
-      .join("");
-    const promptfooSummary = object.promptfoo?.summary || {};
-    artifactStructuredViewEl.innerHTML = `
-      <section class="artifact-object-block">
-        <h3>Dataset</h3>
-        <div class="artifact-key-grid">
-          <div class="artifact-key-value"><div><strong>sample_count</strong><span>${escapeHtml(
-            formatArtifactValue(object.dataset?.sample_count)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>hard_case_sample_count</strong><span>${escapeHtml(
-            formatArtifactValue(object.dataset?.hard_case_sample_count)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>no_visible_report_sample_count</strong><span>${escapeHtml(
-            formatArtifactValue(object.dataset?.no_visible_report_sample_count)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>label_distribution</strong><span>${escapeHtml(
-            formatArtifactValue(object.dataset?.label_distribution)
-          )}</span></div></div>
-        </div>
-      </section>
-      <section class="artifact-object-block">
-        <h3>Metrics</h3>
-        <div class="artifact-key-grid">
-          <div class="artifact-key-value"><div><strong>overall_accuracy</strong><span>${escapeHtml(
-            formatArtifactValue(object.metrics?.overall_accuracy)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>macro_f1</strong><span>${escapeHtml(
-            formatArtifactValue(object.metrics?.macro_f1)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>json_valid_rate</strong><span>${escapeHtml(
-            formatArtifactValue(object.metrics?.json_valid_rate)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>hard_cases_accuracy</strong><span>${escapeHtml(
-            formatArtifactValue(object.metrics?.hard_cases_accuracy)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>has_visible_report_false_accuracy</strong><span>${escapeHtml(
-            formatArtifactValue(object.metrics?.has_visible_report_false_accuracy)
-          )}</span></div></div>
-        </div>
-      </section>
-      <section class="artifact-object-block">
-        <h3>Quality</h3>
-        <div class="artifact-key-grid">
-          <div class="artifact-key-value"><div><strong>mismatch_count</strong><span>${escapeHtml(
-            formatArtifactValue(object.quality?.mismatch_count)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>parse_failure_count</strong><span>${escapeHtml(
-            formatArtifactValue(object.quality?.parse_failure_count)
-          )}</span></div></div>
-        </div>
-        ${
-          topConfusions
-            ? `
-              <div class="artifact-table-wrapper">
-                <table class="artifact-table">
-                  <thead>
-                    <tr><th>expected</th><th>predicted</th><th>count</th></tr>
-                  </thead>
-                  <tbody>${topConfusions}</tbody>
-                </table>
-              </div>
-            `
-            : '<div class="empty-state">当前没有非对角混淆样本。</div>'
-        }
-      </section>
-      <section class="artifact-object-block">
-        <h3>Promptfoo</h3>
-        <div class="artifact-key-grid">
-          <div class="artifact-key-value"><div><strong>status</strong><span>${escapeHtml(
-            formatArtifactValue(object.promptfoo?.status)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>pass_rate</strong><span>${escapeHtml(
-            formatArtifactValue(promptfooSummary.pass_rate)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>total_tests</strong><span>${escapeHtml(
-            formatArtifactValue(promptfooSummary.total_tests)
-          )}</span></div></div>
-          <div class="artifact-key-value"><div><strong>results_path</strong><span>${escapeHtml(
-            formatArtifactValue(object.promptfoo?.results_path)
-          )}</span></div></div>
-        </div>
-      </section>
-    `;
-    return;
-  }
-  const entries = Object.entries(object);
-  artifactStructuredViewEl.innerHTML = `
-    <div class="artifact-object-block">
-      <h3>${escapeHtml(payload.key)}</h3>
-      <div class="artifact-key-grid">
-        ${entries
-          .map(
-            ([label, value]) => `
-              <div class="artifact-key-value">
-                <div>
-                  <strong>${escapeHtml(label)}</strong>
-                  <span>${escapeHtml(formatArtifactValue(value))}</span>
-                </div>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderArtifactTextStructured(payload) {
-  renderArtifactSummary(payload, []);
-  artifactStructuredViewEl.innerHTML = `
-    <article class="artifact-text-block">
-      <h3>${escapeHtml(payload.key)}</h3>
-      <pre>${escapeHtml(payload.content || "文件不存在")}</pre>
-    </article>
-  `;
+  return artifactsModule.getVisibleArtifacts(run);
 }
 
 function renderArtifactStructured(payload) {
-  renderRawCandidateControls(payload);
-  renderArtifactExplanation(payload);
-  if (!payload) {
-    artifactSummaryBarEl.innerHTML = "";
-    artifactStructuredViewEl.innerHTML = '<div class="empty-state">暂无内容</div>';
-    return;
-  }
-  if (payload.kind === "jsonl") {
-    renderArtifactJsonlStructured(payload);
-    return;
-  }
-  if (payload.kind === "json") {
-    renderArtifactJsonStructured(payload);
-    return;
-  }
-  renderArtifactTextStructured(payload);
+  artifactsModule.renderArtifactStructured(payload);
+}
+
+function renderArtifacts() {
+  artifactsModule.renderArtifacts();
+}
+
+function renderReviewSummary(summary = {}) {
+  reviewModule.renderReviewSummary(summary);
+}
+
+function renderReviews() {
+  reviewModule.renderReviews();
 }
 
 function renderTasks() {
   taskCountEl.textContent = String(state.tasks.length);
+  createTaskButton.disabled = state.creatingTask || !!state.loadingCommand || !!state.deletingTaskName;
 
   if (!state.tasks.length) {
     taskListEl.innerHTML = '<div class="empty-state">没有发现 task。</div>';
@@ -2298,18 +993,33 @@ function renderTasks() {
   taskListEl.innerHTML = state.tasks
     .map(
       (task) => `
-        <button class="task-item ${task.name === state.selectedTask?.name ? "is-active" : ""}" type="button" data-task="${task.name}">
-          <strong>${escapeHtml(task.name)}</strong>
-          <span>${escapeHtml(task.theme || "未设置主题")}</span>
-          <div class="task-item-meta">
-            <span>${escapeHtml(task.task_type || "task")}</span>
-            <span>${escapeHtml(task.language || "zh")}</span>
-          </div>
-          <div class="task-item-foot">
-            <span>${escapeHtml(`${task.labels?.length || 0} labels`)}</span>
-            <span>${escapeHtml(`${task.run_count || 0} runs`)}</span>
-          </div>
-        </button>
+        <article class="task-item-row ${task.name === state.selectedTask?.name ? "is-active" : ""}">
+          <button
+            class="task-item ${task.name === state.selectedTask?.name ? "is-active" : ""}"
+            type="button"
+            data-task="${task.name}"
+            ${state.deletingTaskName || state.loadingCommand || state.creatingTask ? "disabled" : ""}
+          >
+            <strong>${escapeHtml(task.name)}</strong>
+            <span>${escapeHtml(task.theme || "未设置主题")}</span>
+            <div class="task-item-meta">
+              <span>${escapeHtml(task.task_type || "task")}</span>
+              <span>${escapeHtml(task.language || "zh")}</span>
+            </div>
+            <div class="task-item-foot">
+              <span>${escapeHtml(`${task.labels?.length || 0} labels`)}</span>
+              <span>${escapeHtml(`${task.run_count || 0} runs`)}</span>
+            </div>
+          </button>
+          <button
+            class="task-delete-button"
+            type="button"
+            data-delete-task="${task.name}"
+            ${state.deletingTaskName || state.loadingCommand || state.creatingTask ? "disabled" : ""}
+          >
+            删除
+          </button>
+        </article>
       `
     )
     .join("");
@@ -2317,6 +1027,11 @@ function renderTasks() {
   taskListEl.querySelectorAll("[data-task]").forEach((button) => {
     button.addEventListener("click", async () => {
       await selectTask(button.dataset.task);
+    });
+  });
+  taskListEl.querySelectorAll("[data-delete-task]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await deleteTask(button.dataset.deleteTask);
     });
   });
 }
@@ -2330,7 +1045,7 @@ function renderRuns() {
   }
 
   if (!state.runs.length) {
-    runListEl.innerHTML = '<div class="empty-state">当前 task 还没有 run。切到“任务定义”页执行 generate 或 run-all。</div>';
+    runListEl.innerHTML = '<div class="empty-state">当前 task 还没有 run。切到“任务配置”页执行 generate 或 run-all。</div>';
     return;
   }
 
@@ -2375,13 +1090,16 @@ function renderRuns() {
 }
 
 function renderSummary() {
-  const taskScopedView = state.activeTab === "task-spec";
+  const taskScopedView = state.activeTab === "task-spec" || state.activeTab === "settings";
+  const settingsView = state.activeTab === "settings";
   if (!state.selectedTask) {
-    workspaceTitleEl.textContent = "选择 task";
-    workspaceSubtitleEl.textContent = "左侧选择一个 task，工作台会自动加载运行历史、关键产物与人工复核入口。";
+    workspaceTitleEl.textContent = settingsView ? "全局设置" : "选择 task";
+    workspaceSubtitleEl.textContent = settingsView
+      ? "这里管理 workspace 级大模型入口、默认模型和连通性探活，不依赖具体 task。"
+      : "左侧选择一个 task，工作台会自动加载运行历史、关键产物与人工复核入口。";
     taskNameValueEl.textContent = "-";
-    runIdValueEl.textContent = "-";
-    runStatusValueEl.textContent = "-";
+    runIdValueEl.textContent = settingsView ? "workspace" : "-";
+    runStatusValueEl.textContent = settingsView ? "global config" : "-";
     lastStageValueEl.textContent = "-";
     createdAtValueEl.textContent = "-";
     updatedAtValueEl.textContent = "-";
@@ -2390,17 +1108,18 @@ function renderSummary() {
     return;
   }
 
-  workspaceTitleEl.textContent = state.selectedTask.name;
-  workspaceSubtitleEl.textContent =
-    taskScopedView
-      ? "这是 task 的卷宗页，用来定义标签体系、scenario、prompts 与导出规则，并从这里启动新 run。"
+  workspaceTitleEl.textContent = settingsView ? "全局设置" : state.selectedTask.name;
+  workspaceSubtitleEl.textContent = settingsView
+    ? "这是 workspace 级设置页，用来统一维护大模型 provider、默认模型与连通性。task runtime 只负责引用这些全局约定。"
+    : taskScopedView
+      ? "这是 task 的配置页，用来维护标签体系、场景、提示词与导出规则，并从这里启动新 run。"
       : "这是 run 的执行页，只负责推进当前运行实例、检查阶段进度与处理后续动作。";
-  taskNameValueEl.textContent = state.selectedTask.name;
-  labelSummaryValueEl.textContent = state.selectedTask.labels.join(" / ") || "-";
+  taskNameValueEl.textContent = settingsView ? "workspace" : state.selectedTask.name;
+  labelSummaryValueEl.textContent = settingsView ? "-" : state.selectedTask.labels.join(" / ") || "-";
 
   if (!state.selectedRun || taskScopedView) {
-    runIdValueEl.textContent = taskScopedView ? "任务上下文" : "未选择";
-    runStatusValueEl.textContent = taskScopedView ? "任务视图" : "未选择 run";
+    runIdValueEl.textContent = settingsView ? "workspace" : taskScopedView ? "任务上下文" : "未选择";
+    runStatusValueEl.textContent = settingsView ? "global config" : taskScopedView ? "任务视图" : "未选择 run";
     lastStageValueEl.textContent = "-";
     createdAtValueEl.textContent = "-";
     updatedAtValueEl.textContent = "-";
@@ -2416,275 +1135,6 @@ function renderSummary() {
   renderOperationalNarrative();
 }
 
-function renderArtifacts() {
-  if (!state.selectedRun) {
-    artifactListEl.innerHTML = '<div class="empty-state">选择 run 后可查看产物。</div>';
-    artifactMetaEl.textContent = "暂无选中 run";
-    state.artifactPayload = null;
-    artifactPreviewEl.textContent = "暂无内容";
-    renderArtifactStructured(null);
-    return;
-  }
-
-  const artifacts = getVisibleArtifacts(state.selectedRun);
-  if (!artifacts.length) {
-    artifactListEl.innerHTML = '<div class="empty-state">当前 run 还没有可展示的产物。</div>';
-    artifactMetaEl.textContent = "当前 run 暂无产物";
-    artifactPreviewEl.textContent = "暂无内容";
-    renderArtifactStructured(null);
-    return;
-  }
-
-  const recommendedKeys = new Set(getRecommendedArtifactKeys(state.selectedRun));
-  const recommendedArtifacts = artifacts.filter((artifact) => recommendedKeys.has(artifact.key));
-  const groupedArtifacts = groupArtifactsByCategory(artifacts);
-
-  artifactListEl.innerHTML = `
-    <article class="artifact-nav-overview">
-      <div class="artifact-nav-head">
-        <div>
-          <h3>诊断导航</h3>
-          <p>按阶段浏览产物，并优先打开当前最值得检查的文件。</p>
-        </div>
-        <span class="artifact-nav-count">${escapeHtml(String(artifacts.length))}</span>
-      </div>
-      <div class="artifact-nav-chip-row">
-        <span>${escapeHtml(`last_stage: ${state.selectedRun.last_stage || "created"}`)}</span>
-        <span>${escapeHtml(`status: ${state.selectedRun.status || "-"}`)}</span>
-        <span>${escapeHtml(getProgressText(state.selectedRun))}</span>
-      </div>
-      ${
-        recommendedArtifacts.length
-          ? `
-            <div class="artifact-spotlight">
-              <strong>建议先看</strong>
-              <div class="artifact-spotlight-row">
-                ${recommendedArtifacts
-                  .map(
-                    (artifact) => `
-                      <button
-                        class="artifact-spotlight-button ${artifact.key === state.selectedArtifactKey ? "is-active" : ""}"
-                        type="button"
-                        data-artifact="${artifact.key}"
-                      >
-                        ${escapeHtml(artifact.key)}
-                      </button>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </div>
-          `
-          : ""
-      }
-    </article>
-    ${groupedArtifacts
-      .map(([category, items]) => {
-        const categoryInfo = getArtifactCategoryInfo(category);
-        return `
-          <section class="artifact-nav-group">
-            <div class="artifact-nav-group-head">
-              <div>
-                <h3>${escapeHtml(categoryInfo.label)}</h3>
-                <p>${escapeHtml(categoryInfo.description)}</p>
-              </div>
-              <span class="artifact-nav-count">${escapeHtml(String(items.length))}</span>
-            </div>
-            <div class="artifact-nav-group-list">
-              ${items
-                .map((artifact) => {
-                  const explanation = ARTIFACT_EXPLANATIONS[artifact.key];
-                  const recommended = recommendedKeys.has(artifact.key);
-                  return `
-                    <button
-                      class="artifact-item artifact-item-diagnostic ${artifact.key === state.selectedArtifactKey ? "is-active" : ""} ${recommended ? "is-recommended" : ""}"
-                      type="button"
-                      data-artifact="${artifact.key}"
-                    >
-                      <div class="artifact-item-head">
-                        <strong>${escapeHtml(artifact.key)}</strong>
-                        <span class="artifact-item-kind">${escapeHtml(artifact.kind)}</span>
-                      </div>
-                      <span class="artifact-item-role">${escapeHtml(
-                        explanation?.stage ? `${explanation.stage} / ${category}` : category
-                      )}</span>
-                      <span>${escapeHtml(getArtifactListHint(artifact))}</span>
-                      <div class="artifact-item-meta">
-                        <span>${escapeHtml(artifact.relative_path)}</span>
-                        ${recommended ? `<span class="artifact-item-badge">recommended</span>` : ""}
-                      </div>
-                    </button>
-                  `;
-                })
-                .join("")}
-            </div>
-          </section>
-        `;
-      })
-      .join("")}
-  `;
-
-  artifactListEl.querySelectorAll("[data-artifact]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await loadArtifact(button.dataset.artifact);
-    });
-  });
-}
-
-function renderReviewSummary(summary = {}) {
-  const normalizedSummary = {
-    total: summary.total ?? state.reviewRecords.length,
-    pending:
-      summary.pending ??
-      state.reviewRecords.filter((record) => (record.review_decision || "pending") === "pending").length,
-    accepted: summary.accepted ?? state.reviewRecords.filter((record) => record.review_decision === "accepted").length,
-    corrected:
-      summary.corrected ?? state.reviewRecords.filter((record) => record.review_decision === "corrected").length,
-    rejected: summary.rejected ?? state.reviewRecords.filter((record) => record.review_decision === "rejected").length,
-  };
-  const chips = [
-    ["all", "总数", normalizedSummary.total],
-    ["pending", "待处理", normalizedSummary.pending],
-    ["accepted", "接受", normalizedSummary.accepted],
-    ["corrected", "纠正", normalizedSummary.corrected],
-    ["rejected", "拒绝", normalizedSummary.rejected],
-  ];
-  reviewSummaryEl.innerHTML = chips
-    .map(
-      ([filter, label, value]) => `
-        <button
-          class="review-summary-chip ${state.reviewFilter === filter ? "is-active" : ""}"
-          type="button"
-          data-review-filter="${escapeHtml(filter)}"
-          aria-pressed="${state.reviewFilter === filter ? "true" : "false"}"
-        >
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </button>
-      `
-    )
-    .join("");
-
-  reviewSummaryEl.querySelectorAll("[data-review-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.reviewFilter = button.dataset.reviewFilter || "all";
-      renderReviewSummary();
-      renderReviews();
-    });
-  });
-}
-
-function reviewRecordMatchesFilter(record) {
-  if (state.reviewFilter === "all") {
-    return true;
-  }
-  return (record.review_decision || "pending") === state.reviewFilter;
-}
-
-function renderReviews() {
-  if (!state.selectedRun) {
-    reviewListEl.innerHTML = '<div class="empty-state">选择 run 后可查看 review 记录。</div>';
-    renderReviewSummary();
-    return;
-  }
-
-  if (!state.reviewRecords.length) {
-    reviewListEl.innerHTML =
-      '<div class="empty-state">当前 run 还没有 review_candidates 或 review_results。先执行 review-export。</div>';
-    renderReviewSummary();
-    return;
-  }
-
-  const filteredRecords = state.reviewRecords
-    .map((record, index) => ({ record, index }))
-    .filter(({ record }) => reviewRecordMatchesFilter(record));
-  if (!filteredRecords.length) {
-    const activeFilterLabel =
-      state.reviewFilter === "all"
-        ? "全部记录"
-        : REVIEW_DECISION_DETAILS[state.reviewFilter]?.display || state.reviewFilter;
-    reviewListEl.innerHTML = `<div class="empty-state">当前筛选“${escapeHtml(activeFilterLabel)}”下没有 review 记录。</div>`;
-    return;
-  }
-
-  const reviewCards = filteredRecords
-    .map(({ record, index }) => {
-      const selectedDecision = record.review_decision || "pending";
-      const labelOptions = state.reviewLabels
-        .map(
-          (label) =>
-            `<option value="${escapeHtml(label)}" ${record.reviewer_label === label ? "selected" : ""}>${escapeHtml(label)}</option>`
-        )
-        .join("");
-
-      return `
-        <article class="review-record" data-review-index="${index}">
-          <h3>${escapeHtml(record.sample_id)}</h3>
-          <p>${escapeHtml(record.user_text)}</p>
-          <div class="review-meta">
-            <span>teacher: ${escapeHtml(record.teacher_label || "-")}</span>
-            <span>decision: ${escapeHtml(selectedDecision)}</span>
-            <span>tags: ${escapeHtml((record.tags || []).join(", ") || "-")}</span>
-          </div>
-          <div class="review-grid">
-            <div class="review-field review-field-full">
-              <div class="review-field-head">
-                <label>Decision</label>
-                <span class="review-field-hint">决定这条样本是否改标、拒绝，或进入后续 gold。</span>
-              </div>
-              <select data-field="review_decision">
-                ${renderReviewDecisionOptions(selectedDecision)}
-              </select>
-              ${renderReviewDecisionGuide(selectedDecision)}
-            </div>
-            <div class="review-field">
-              <label>Reviewer Label</label>
-              <select data-field="reviewer_label">
-                <option value="">未设置</option>
-                ${labelOptions}
-              </select>
-              <p class="review-field-hint"><code>accepted</code> 会自动回填 teacher_label；<code>corrected</code> 时这里必填。</p>
-            </div>
-            <div class="review-field">
-              <label>Reviewed By</label>
-              <input data-field="reviewed_by" type="text" value="${escapeHtml(record.reviewed_by || "")}" />
-              <p class="review-field-hint">留空时，保存会优先使用页面顶部的 Reviewer 名称。</p>
-            </div>
-            <div class="review-field">
-              <label>Reviewed At</label>
-              <input data-field="reviewed_at" type="text" value="${escapeHtml(record.reviewed_at || "")}" />
-              <p class="review-field-hint">留空时，保存会自动补当前时间。</p>
-            </div>
-            <div class="review-field review-field-full">
-              <label>Comment</label>
-              <textarea data-field="review_comment" rows="3">${escapeHtml(record.review_comment || "")}</textarea>
-              <p class="review-field-hint"><code>rejected</code> 时必填，建议写清样本问题或拒绝原因。</p>
-            </div>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
-
-  reviewListEl.innerHTML = reviewCards;
-
-  reviewListEl.querySelectorAll("[data-review-index]").forEach((container) => {
-    const index = Number(container.dataset.reviewIndex);
-    container.querySelectorAll("[data-field]").forEach((field) => {
-      field.addEventListener("input", () => {
-        state.reviewRecords[index][field.dataset.field] = field.value;
-      });
-      field.addEventListener("change", () => {
-        state.reviewRecords[index][field.dataset.field] = field.value;
-        if (field.dataset.field === "review_decision") {
-          renderReviewSummary();
-          renderReviews();
-        }
-      });
-    });
-  });
-}
-
 async function loadTasks() {
   const payload = await api("/api/tasks");
   state.tasks = payload.items || [];
@@ -2698,114 +1148,19 @@ async function loadTasks() {
 }
 
 async function loadTaskSpec(options = {}) {
-  const { preserveEditing = false } = options;
-  if (!state.selectedTask) {
-    state.taskSpec = null;
-    state.taskConfig = null;
-    state.originalTaskConfig = null;
-    state.isEditingTaskConfig = false;
-    syncConfigDirty();
-    renderTaskSpec();
-    return;
-  }
-  const [specPayload, configPayload] = await Promise.all([
-    api(`/api/tasks/${state.selectedTask.name}/spec`),
-    api(`/api/tasks/${state.selectedTask.name}/config-files`),
-  ]);
-  state.taskSpec = specPayload;
-  state.taskConfig = cloneData(configPayload);
-  state.originalTaskConfig = cloneData(configPayload);
-  state.isEditingTaskConfig = preserveEditing ? state.isEditingTaskConfig : false;
-  syncConfigDirty();
-  setConfigStatus("配置已加载");
-  renderTaskSpec();
+  return taskSpecModule.loadTaskSpec(options);
 }
 
-function coercePrimitiveInput(value) {
-  const trimmed = value.trim();
-  if (trimmed === "") {
-    return "";
-  }
-  if (trimmed === "true") {
-    return true;
-  }
-  if (trimmed === "false") {
-    return false;
-  }
-  if (!Number.isNaN(Number(trimmed)) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return trimmed.includes(".") ? Number.parseFloat(trimmed) : Number.parseInt(trimmed, 10);
-  }
-  return trimmed;
+async function loadGlobalLlmSettings() {
+  return taskSpecModule.loadLlmSettings();
 }
 
 function updateTaskConfig(mutator, options = {}) {
-  if (!state.taskConfig) {
-    return;
-  }
-  const { rerenderEditors = true } = options;
-  mutator(state.taskConfig);
-  syncConfigDirty();
-  setConfigStatus(state.configDirty ? "存在未保存修改" : "配置已同步", state.configDirty ? "warning" : "neutral");
-  renderTaskSpecReadOnly(buildTaskSpecView());
-  renderConfigSummary();
-  renderTaskScenarioSummary();
-  renderConfigStatusActions();
-  renderPromptSwitch();
-  if (rerenderEditors) {
-    renderTaskMetaForm();
-    renderTaskRuntimeEditor();
-    renderPrimitiveEditor(taskRulesEditorEl, "rules", state.taskConfig?.rules || {});
-    renderPrimitiveEditor(taskExportsEditorEl, "exports", state.taskConfig?.exports || {});
-    renderTaskLabelsEditor();
-    renderTaskScenarioEditor();
-    renderTaskPromptEditor();
-  }
+  return taskSpecModule.updateTaskConfig(mutator, options);
 }
 
 async function saveTaskConfig() {
-  if (!state.selectedTask || !state.taskConfig) {
-    setMessage("当前没有可保存的 task 配置。", "error");
-    return;
-  }
-
-  state.configSaving = true;
-  renderConfigStatusActions();
-  setConfigStatus("正在保存配置...");
-  setMessage("正在保存 task 配置...");
-
-  try {
-    const payload = await api(`/api/tasks/${state.selectedTask.name}/config-files`, {
-      method: "PUT",
-      body: JSON.stringify({
-        task: state.taskConfig.task,
-        runtime: state.taskConfig.runtime,
-        rules: state.taskConfig.rules,
-        exports: state.taskConfig.exports,
-        labels: state.taskConfig.labels,
-        scenarios: state.taskConfig.scenarios,
-        generator_prompt: state.taskConfig.generator_prompt,
-        teacher_prompt: state.taskConfig.teacher_prompt,
-      }),
-    });
-    state.taskConfig = cloneData(payload.config);
-    state.originalTaskConfig = cloneData(payload.config);
-    state.taskSpec = payload.spec;
-    state.isEditingTaskConfig = false;
-    syncConfigDirty();
-    await loadTasks();
-    state.selectedTask = state.tasks.find((item) => item.name === state.selectedTask?.name) || state.selectedTask;
-    setConfigStatus("配置保存成功", "success");
-    setMessage("task 配置已保存", "success");
-    renderTaskSpec();
-    renderTasks();
-    renderSummary();
-  } catch (error) {
-    setConfigStatus(error.message, "error");
-    setMessage(error.message, "error");
-  } finally {
-    state.configSaving = false;
-    renderConfigStatusActions();
-  }
+  return taskSpecModule.saveTaskConfig();
 }
 
 async function loadRuns() {
@@ -2821,7 +1176,7 @@ async function loadRuns() {
   state.selectedRunId =
     state.selectedRunId && state.runs.some((run) => run.run_id === state.selectedRunId)
       ? state.selectedRunId
-      : null;
+      : state.runs[0]?.run_id || null;
   renderRuns();
 
   if (state.selectedRunId) {
@@ -2834,6 +1189,25 @@ async function loadRuns() {
   }
 }
 
+function clearTaskWorkspaceState() {
+  state.selectedTask = null;
+  state.taskSpec = null;
+  state.taskConfig = null;
+  state.originalTaskConfig = null;
+  state.runtimeCatalog = null;
+  state.isEditingTaskConfig = false;
+  state.runtimeManualModelOpen = {};
+  state.scenarioAdvancedOpen = {};
+  state.selectedRunId = null;
+  state.selectedRun = null;
+  state.runs = [];
+  state.selectedArtifactKey = null;
+  state.artifactPayload = null;
+  state.reviewRecords = [];
+  state.reviewLabels = [];
+  syncConfigDirty();
+}
+
 async function loadRunDetails(runId) {
   state.selectedRunId = runId;
   const run = await api(`/api/tasks/${state.selectedTask.name}/runs/${runId}`);
@@ -2843,10 +1217,14 @@ async function loadRunDetails(runId) {
 
   const visibleArtifacts = getVisibleArtifacts(run);
   renderArtifacts();
+  const recommendedArtifactKeys = RECOMMENDED_ARTIFACTS_BY_STAGE[normalizeStageName(run.last_stage)] || [];
+  const recommendedArtifactKey = recommendedArtifactKeys.find((key) =>
+    visibleArtifacts.some((artifact) => artifact.key === key)
+  );
   state.selectedArtifactKey =
     state.selectedArtifactKey && visibleArtifacts.some((artifact) => artifact.key === state.selectedArtifactKey)
       ? state.selectedArtifactKey
-      : visibleArtifacts[0]?.key || null;
+      : recommendedArtifactKey || visibleArtifacts[0]?.key || null;
 
   if (state.selectedArtifactKey) {
     await loadArtifact(state.selectedArtifactKey);
@@ -2866,19 +1244,23 @@ async function selectTask(taskName, options = {}) {
   state.taskConfig = null;
   state.originalTaskConfig = null;
   state.isEditingTaskConfig = false;
+  state.runtimeManualModelOpen = {};
+  state.scenarioAdvancedOpen = {};
   syncConfigDirty();
   state.selectedRunId = previousRunId;
   state.selectedRun = null;
   state.selectedArtifactKey = null;
   state.reviewRecords = [];
-  if (activateTaskTab) {
-    setActiveTab("task-spec");
-  }
   renderTasks();
   renderSummary();
   renderTaskSpec();
   await loadTaskSpec();
   await loadRuns();
+  if (activateTaskTab) {
+    setActiveTab(state.selectedRunId ? "run-control" : "task-spec");
+  } else {
+    renderSummary();
+  }
 }
 
 async function selectRun(runId) {
@@ -2890,69 +1272,11 @@ async function selectRun(runId) {
 }
 
 async function loadArtifact(artifactKey) {
-  if (!state.selectedTask || !state.selectedRun) {
-    return;
-  }
-  state.selectedArtifactKey = artifactKey;
-  renderArtifacts();
-  state.artifactPayload = null;
-  renderArtifactViewSwitch();
-  artifactMetaEl.textContent = "读取中...";
-  artifactPreviewEl.textContent = "";
-  artifactStructuredViewEl.innerHTML = '<div class="empty-state">正在读取产物...</div>';
-
-  try {
-    const payload = await api(
-      `/api/tasks/${state.selectedTask.name}/runs/${state.selectedRun.run_id}/artifacts/${artifactKey}`
-    );
-    state.artifactPayload = payload;
-    state.artifactSearch = "";
-    state.artifactFilter = "all";
-    artifactSearchInputEl.value = "";
-    renderArtifactFilterOptions(payload);
-    renderArtifactViewSwitch();
-    artifactMetaEl.textContent = `${payload.relative_path} · ${payload.kind} · ${
-      payload.exists ? "exists" : "missing"
-    }`;
-    artifactPreviewEl.textContent =
-      payload.content == null
-        ? "文件不存在"
-        : typeof payload.content === "string"
-          ? payload.content
-          : JSON.stringify(payload.content, null, 2);
-    renderArtifactStructured(payload);
-  } catch (error) {
-    state.artifactPayload = null;
-    artifactMetaEl.textContent = "读取失败";
-    artifactPreviewEl.textContent = error.message;
-    artifactStructuredViewEl.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
-    setMessage(error.message, "error");
-  }
+  return artifactsModule.loadArtifact(artifactKey);
 }
 
 async function loadReviewRecords() {
-  if (!state.selectedTask || !state.selectedRun) {
-    state.reviewRecords = [];
-    state.reviewLabels = [];
-    renderReviews();
-    return;
-  }
-
-  try {
-    const payload = await api(
-      `/api/tasks/${state.selectedTask.name}/runs/${state.selectedRun.run_id}/review-records`
-    );
-    state.reviewRecords = payload.records || [];
-    state.reviewLabels = payload.labels || [];
-    renderReviews();
-    renderReviewSummary(payload.summary || {});
-  } catch (error) {
-    state.reviewRecords = [];
-    state.reviewLabels = [];
-    renderReviews();
-    renderReviewSummary();
-    setMessage(error.message, "error");
-  }
+  return reviewModule.loadReviewRecords();
 }
 
 function setCommandLoading(command, isLoading) {
@@ -2962,6 +1286,7 @@ function setCommandLoading(command, isLoading) {
     button.disabled = isLoading;
   });
   refreshAllButton.disabled = isLoading;
+  createTaskButton.disabled = isLoading || state.creatingTask;
   reloadArtifactButton.disabled = isLoading;
   reloadReviewButton.disabled = isLoading;
   saveReviewButton.disabled = isLoading;
@@ -3002,35 +1327,7 @@ async function runCommand(command) {
 }
 
 async function saveReviewRecords() {
-  if (!state.selectedTask || !state.selectedRun) {
-    setMessage("当前没有可保存的 run。", "error");
-    return;
-  }
-
-  setCommandLoading("save-review", true);
-  setMessage("正在保存 review_results ...");
-
-  try {
-    const payload = await api(
-      `/api/tasks/${state.selectedTask.name}/runs/${state.selectedRun.run_id}/review-records`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          reviewer: reviewerInputEl.value.trim() || null,
-          records: state.reviewRecords,
-        }),
-      }
-    );
-    state.reviewRecords = payload.records || [];
-    renderReviews();
-    renderReviewSummary(payload.summary || {});
-    await loadRunDetails(state.selectedRun.run_id);
-    setMessage("review_results 已保存", "success");
-  } catch (error) {
-    setMessage(error.message, "error");
-  } finally {
-    setCommandLoading("save-review", false);
-  }
+  return reviewModule.saveReviewRecords();
 }
 
 async function deleteRun(runId) {
@@ -3072,50 +1369,110 @@ async function deleteRun(runId) {
   }
 }
 
-function createEmptyScenario() {
-  return {
-    intent: "rewrite_report",
-    difficulty: "medium",
-    tags: [],
-    context: {
-      has_visible_report: false,
-      previous_report_summary: "",
-      dialogue_stage: "standalone",
-      language: "zh",
-    },
-    templates: [""],
-  };
+async function deleteTask(taskName) {
+  if (!taskName || state.deletingTaskName || state.creatingTask || state.loadingCommand) {
+    return;
+  }
+
+  const confirmed = window.confirm(`确认删除 task ${taskName}？这会移除该任务的配置、runs 和全部产物。`);
+  if (!confirmed) {
+    return;
+  }
+
+  const deletingSelectedTask = state.selectedTask?.name === taskName;
+  state.deletingTaskName = taskName;
+  renderTasks();
+  setMessage(`正在删除 task ${taskName} ...`);
+
+  try {
+    await api(`/api/tasks/${taskName}`, {
+      method: "DELETE",
+    });
+
+    if (deletingSelectedTask) {
+      clearTaskWorkspaceState();
+    }
+
+    await loadTasks();
+
+    if (!state.selectedTask) {
+      renderTasks();
+      renderRuns();
+      renderSummary();
+      renderTaskSpec();
+      renderArtifacts();
+      renderReviews();
+    } else if (deletingSelectedTask) {
+      await selectTask(state.selectedTask.name, { activateTaskTab: true });
+    } else {
+      renderTasks();
+      renderSummary();
+    }
+
+    setMessage(`已删除 task ${taskName}`, "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+  } finally {
+    state.deletingTaskName = null;
+    renderTasks();
+  }
+}
+
+async function createTask() {
+  if (state.creatingTask || state.loadingCommand) {
+    return;
+  }
+
+  const taskName = window.prompt("输入新 task 名称（建议使用小写字母、数字、-、_）");
+  if (taskName == null) {
+    return;
+  }
+
+  const normalizedName = taskName.trim();
+  if (!normalizedName) {
+    setMessage("task 名称不能为空。", "error");
+    return;
+  }
+
+  state.creatingTask = true;
+  renderTasks();
+  setMessage(`正在创建 task ${normalizedName} ...`);
+
+  try {
+    const payload = await api("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(createDefaultTaskConfig(normalizedName)),
+    });
+    await loadTasks();
+    await selectTask(payload.task.name, { activateTaskTab: true });
+    enterTaskConfigEditMode();
+    setMessage(`已创建 task ${payload.task.name}，请继续完善配置。`, "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+  } finally {
+    state.creatingTask = false;
+    renderTasks();
+  }
 }
 
 function enterTaskConfigEditMode() {
-  if (!state.taskConfig || state.configSaving) {
-    return;
-  }
-  state.isEditingTaskConfig = true;
-  if (!state.configDirty) {
-    setConfigStatus("已进入编辑模式");
-  }
-  renderTaskSpec();
+  return taskSpecModule.enterTaskConfigEditMode();
 }
 
 function cancelTaskConfigEditMode() {
-  if (!state.originalTaskConfig || state.configSaving) {
-    return;
-  }
-  state.taskConfig = cloneData(state.originalTaskConfig);
-  state.isEditingTaskConfig = false;
-  syncConfigDirty();
-  setConfigStatus("已取消编辑");
-  renderTaskSpec();
+  return taskSpecModule.cancelTaskConfigEditMode();
 }
 
 async function refreshAll() {
   setMessage("正在刷新工作台...");
   try {
     const preserveRunSelection = !!state.selectedRunId;
+    await loadGlobalLlmSettings();
     await loadTasks();
     if (state.selectedTask) {
       await selectTask(state.selectedTask.name, { preserveRunSelection, activateTaskTab: false });
+    } else {
+      renderTaskSpec();
     }
     setMessage("已刷新", "success");
   } catch (error) {
@@ -3123,136 +1480,7 @@ async function refreshAll() {
   }
 }
 
-taskMetaFormEl.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement) || !target.dataset.configSection) {
-    return;
-  }
-  updateTaskConfig((draft) => {
-    draft[target.dataset.configSection][target.dataset.configKey] = target.value;
-  }, { rerenderEditors: false });
-});
-
-taskRuntimeEditorEl.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement) || !target.dataset.runtimeStage) {
-    return;
-  }
-  updateTaskConfig((draft) => {
-    draft.runtime[target.dataset.runtimeStage][target.dataset.runtimeKey] = coercePrimitiveInput(target.value);
-  }, { rerenderEditors: false });
-});
-
-function bindPrimitiveEditor(container, sectionName) {
-  container.addEventListener("input", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement) || target.dataset.configSection !== sectionName) {
-      return;
-    }
-    updateTaskConfig((draft) => {
-      draft[sectionName][target.dataset.configKey] = coercePrimitiveInput(target.value);
-    }, { rerenderEditors: false });
-  });
-}
-
-bindPrimitiveEditor(taskRulesEditorEl, "rules");
-bindPrimitiveEditor(taskExportsEditorEl, "exports");
-
-taskLabelsEditorEl.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-  if (target.matches("[data-label-index]")) {
-    const index = Number(target.dataset.labelIndex);
-    updateTaskConfig((draft) => {
-      draft.labels.splice(index, 1);
-    });
-    return;
-  }
-  if (target.id === "addLabelButton") {
-    const input = document.getElementById("newLabelInput");
-    if (!(input instanceof HTMLInputElement)) {
-      return;
-    }
-    const value = input.value.trim();
-    if (!value) {
-      setConfigStatus("新增 label 不能为空", "error");
-      return;
-    }
-    updateTaskConfig((draft) => {
-      if (!draft.labels.includes(value)) {
-        draft.labels.push(value);
-      }
-    });
-  }
-});
-
-taskScenarioEditorEl.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) {
-    return;
-  }
-  const index = Number(target.dataset.scenarioIndex);
-  if (!Number.isInteger(index) || !state.taskConfig?.scenarios?.[index]) {
-    return;
-  }
-  updateTaskConfig((draft) => {
-    const scenario = draft.scenarios[index];
-    if (target.dataset.scenarioField) {
-      const field = target.dataset.scenarioField;
-      if (field === "tags") {
-        scenario.tags = target.value
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean);
-      } else if (field === "templates") {
-        scenario.templates = target.value
-          .split("\n")
-          .map((item) => item.trim())
-          .filter(Boolean);
-      } else if (field === "generation_count") {
-        const value = target.value.trim();
-        if (!value) {
-          delete scenario.generation_count;
-        } else {
-          scenario.generation_count = Number.parseInt(value, 10);
-        }
-      } else {
-        scenario[field] = target.value;
-      }
-    }
-    if (target.dataset.scenarioContext) {
-      const field = target.dataset.scenarioContext;
-      if (field === "has_visible_report") {
-        scenario.context[field] = target.value === "true";
-      } else {
-        scenario.context[field] = target.value;
-      }
-    }
-  }, { rerenderEditors: false });
-});
-
-taskScenarioEditorEl.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement) || !target.matches("[data-remove-scenario]")) {
-    return;
-  }
-  const index = Number(target.dataset.removeScenario);
-  updateTaskConfig((draft) => {
-    draft.scenarios.splice(index, 1);
-  });
-});
-
-taskPromptEditorEl.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLTextAreaElement) || !target.dataset.promptField) {
-    return;
-  }
-  updateTaskConfig((draft) => {
-    draft[target.dataset.promptField] = target.value;
-  }, { rerenderEditors: false });
-});
+taskSpecModule.bindEvents();
 
 allCommandButtons.forEach((button) => {
   button.addEventListener("click", async () => {
@@ -3267,59 +1495,9 @@ workbenchTabButtons.forEach((button) => {
 });
 
 refreshAllButton.addEventListener("click", refreshAll);
-reloadArtifactButton.addEventListener("click", async () => {
-  if (state.selectedArtifactKey) {
-    await loadArtifact(state.selectedArtifactKey);
-  }
-});
-editTaskConfigButton.addEventListener("click", enterTaskConfigEditMode);
-reloadTaskConfigButton.addEventListener("click", async () => {
-  if (!state.selectedTask) {
-    return;
-  }
-  await loadTaskSpec({ preserveEditing: state.isEditingTaskConfig });
-  setConfigStatus("配置已从磁盘重载", "success");
-});
-resetTaskConfigButton.addEventListener("click", cancelTaskConfigEditMode);
-saveTaskConfigButton.addEventListener("click", saveTaskConfig);
-addScenarioButton.addEventListener("click", () => {
-  updateTaskConfig((draft) => {
-    draft.scenarios.push(createEmptyScenario());
-  });
-});
-promptViewSwitchEl.querySelectorAll("[data-prompt-view]").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.promptView = button.dataset.promptView;
-    renderTaskSpec();
-  });
-});
-artifactSearchInputEl.addEventListener("input", () => {
-  state.artifactSearch = artifactSearchInputEl.value;
-  renderArtifactStructured(state.artifactPayload);
-});
-artifactFilterSelectEl.addEventListener("change", () => {
-  state.artifactFilter = artifactFilterSelectEl.value;
-  renderArtifactStructured(state.artifactPayload);
-});
-artifactViewSwitchEl.querySelectorAll("[data-artifact-view]").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.artifactViewMode = button.dataset.artifactView;
-    renderArtifactViewSwitch();
-  });
-});
-rawCandidateViewSwitchEl.querySelectorAll("[data-raw-candidate-view]").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.rawCandidateViewMode = button.dataset.rawCandidateView;
-    renderRawCandidateControls(state.artifactPayload);
-    renderArtifactStructured(state.artifactPayload);
-  });
-});
-rawCandidateGroupBySelectEl.addEventListener("change", () => {
-  state.rawCandidateGroupBy = rawCandidateGroupBySelectEl.value;
-  renderArtifactStructured(state.artifactPayload);
-});
-reloadReviewButton.addEventListener("click", loadReviewRecords);
-saveReviewButton.addEventListener("click", saveReviewRecords);
+createTaskButton.addEventListener("click", createTask);
+artifactsModule.bindEvents();
+reviewModule.bindEvents();
 
 renderWorkbenchTabs();
 

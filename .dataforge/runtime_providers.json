@@ -1,0 +1,14 @@
+{
+  "providers": [
+    {
+      "name": "xiaomi",
+      "label": "xiaomi",
+      "description": "新增一个可视化维护的 provider 别名，运行时会映射到现有实现族。",
+      "badge": "custom",
+      "implementation": "openai_compatible",
+      "base_url_env": "XIAOMI_BASE_URL",
+      "api_key_env": "XIAOMI_API_KEY",
+      "default_model": "mimo-v2-flash"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+scenarios:
+- intent: primary_intent
+  difficulty: medium
+  tags:
+  - custom
+  - bootstrap
+  context:
+    has_visible_report: true
+    previous_report_summary: The user is asking about a newly defined task.
+    dialogue_stage: standalone
+    language: zh
+  templates:
+  - 请围绕当前主题生成一条高质量中文样本。
+  - 构造一条包含明确目标与约束的任务请求。
+  generation_count: 4

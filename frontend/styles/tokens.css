@@ -1,0 +1,86 @@
+:root {
+  --paper: #e8dfd1;
+  --paper-strong: #f3ebdf;
+  --paper-deep: #d6c4ab;
+  --panel: rgba(245, 238, 228, 0.86);
+  --panel-strong: rgba(252, 247, 239, 0.96);
+  --ink: #131313;
+  --ink-soft: #352f2b;
+  --muted: #70665d;
+  --line: rgba(19, 19, 19, 0.12);
+  --line-strong: rgba(19, 19, 19, 0.2);
+  --accent: #c95d2f;
+  --accent-strong: #8f3616;
+  --accent-soft: rgba(201, 93, 47, 0.12);
+  --accent-glow: rgba(201, 93, 47, 0.24);
+  --success: #2f7a4d;
+  --warn: #8b6717;
+  --danger: #8c3024;
+  --sidebar-bg: linear-gradient(180deg, #171717 0%, #1f1b17 100%);
+  --sidebar-card: rgba(255, 248, 238, 0.06);
+  --sidebar-line: rgba(255, 246, 232, 0.12);
+  --shadow: 0 24px 60px rgba(34, 23, 12, 0.14);
+  --shadow-strong: 0 32px 70px rgba(20, 12, 5, 0.18);
+  --radius: 24px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(201, 93, 47, 0.18), transparent 22%),
+    radial-gradient(circle at 85% 0%, rgba(19, 19, 19, 0.08), transparent 26%),
+    linear-gradient(180deg, #efe7dc 0%, #e7dece 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(19, 19, 19, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(19, 19, 19, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.8;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.76), transparent);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.16), transparent 32%),
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.08), transparent 20%);
+  mix-blend-mode: soft-light;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+pre,
+code {
+  font-family: "IBM Plex Sans", sans-serif;
+}

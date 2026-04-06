@@ -1,0 +1,9 @@
+description: custom task promptfoo eval
+dataforge:
+  command:
+  - promptfoo
+providers:
+- echo
+prompts:
+- '{{predicted_json}}'
+tests: file://__DATAFORGE_EVAL_FOR_PROMPTFOO__

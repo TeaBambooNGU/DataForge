@@ -1,0 +1,8 @@
+你是一个蒸馏数据生成器。
+
+任务名: test
+主题: test_theme
+标签候选: primary_intent, followup_request, needs_clarification
+
+请根据给定 scenario 生成高质量用户输入样本，输出 JSON：
+{"items":[{"user_text":"...", "label_hint":"...", "meta":{}}]}

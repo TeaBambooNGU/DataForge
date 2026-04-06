@@ -30,6 +30,15 @@ def _messages_url(base_url: str) -> str:
     return f"{normalized}/v1/messages"
 
 
+def _models_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/models"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/models"
+    return f"{normalized}/v1/models"
+
+
 def _default_retry_count(runtime: dict[str, Any]) -> int:
     if "max_retries" in runtime:
         return int(runtime["max_retries"])
@@ -269,6 +278,89 @@ class AnthropicCompatibleClient:
         if last_error is not None:
             raise AnthropicCompatibleError(str(last_error)) from last_error
         raise AnthropicCompatibleError("Anthropic-compatible request failed without an explicit error")
+
+    def _list_models_once(self, runtime: dict[str, Any]) -> list[dict[str, Any]]:
+        api_key_env = runtime.get("api_key_env", "ANTHROPIC_API_KEY")
+        base_url_env = runtime.get("base_url_env", "ANTHROPIC_BASE_URL")
+        api_key = runtime.get("api_key") or os.environ.get(api_key_env)
+        base_url = runtime.get("base_url") or os.environ.get(base_url_env) or "https://api.anthropic.com/v1"
+        timeout = runtime.get("timeout_seconds", 60)
+
+        if not api_key:
+            raise AnthropicCompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
+
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": runtime.get("anthropic_version", "2023-06-01"),
+            "Content-Type": "application/json",
+        }
+        beta_header = runtime.get("anthropic_beta")
+        if beta_header:
+            headers["anthropic-beta"] = str(beta_header)
+        req = request.Request(
+            _models_url(base_url),
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with self._opener(req, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            retry_after = _parse_retry_after(exc.headers.get("Retry-After")) if exc.headers else None
+            message = f"HTTP {exc.code} from anthropic-compatible endpoint: {detail}"
+            if exc.code in _retry_status_codes(runtime):
+                raise RetryableAnthropicCompatibleError(
+                    f"{message} [retryable]"
+                    if retry_after is None
+                    else f"{message} [retryable after {retry_after}s]",
+                    retry_after=retry_after,
+                ) from exc
+            raise AnthropicCompatibleError(message) from exc
+        except error.URLError as exc:
+            raise RetryableAnthropicCompatibleError(
+                f"Failed to reach anthropic-compatible endpoint: {exc.reason}"
+            ) from exc
+
+        items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            raise AnthropicCompatibleError(f"Unexpected models response: {payload}")
+
+        models: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, str):
+                model_id = item.strip()
+                if model_id:
+                    models.append({"id": model_id})
+                continue
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id", "")).strip()
+            if not model_id:
+                continue
+            models.append(
+                {
+                    "id": model_id,
+                    "display_name": str(item.get("display_name", "")).strip() or None,
+                    "created_at": item.get("created_at"),
+                }
+            )
+        return models
+
+    def list_models(self, runtime: dict[str, Any]) -> list[dict[str, Any]]:
+        max_retries = _default_retry_count(runtime)
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self._list_models_once(runtime)
+            except RetryableAnthropicCompatibleError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    break
+                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+        if last_error is not None:
+            raise AnthropicCompatibleError(str(last_error)) from last_error
+        raise AnthropicCompatibleError("Anthropic-compatible models request failed without an explicit error")
 
 
 class AnthropicCompatibleGeneratorProvider(GeneratorProvider):

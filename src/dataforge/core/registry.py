@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
-from dataforge.core.io import read_json, read_yaml, utc_now, write_json
+from dataforge.core.io import read_json, read_yaml, utc_now, write_json, write_text, write_yaml
+from dataforge.core.runtime_catalog import resolve_runtime_map
 
 
 STATIC_PATH_KEYS = {"labels", "scenario_matrix", "generator_prompt", "teacher_prompt", "promptfoo"}
+TASK_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 RUN_STATUS_ORDER = {
     "created": 0,
     "generated": 1,
@@ -62,6 +65,82 @@ RUN_ARTIFACT_PATHS = {
     "eval_manifest": "reports/manifests/eval.json",
     "student_export_manifest": "reports/manifests/student_export.json",
 }
+DEFAULT_TASK_RUNTIME = {
+    "generator": {
+        "provider": "mock",
+        "model": "mock-generator-v1",
+        "temperature": 0,
+        "max_tokens": 1024,
+        "max_retries": 1,
+        "retry_backoff_seconds": 1,
+    },
+    "teacher": {
+        "provider": "mock",
+        "model": "mock-teacher-v1",
+        "temperature": 0,
+        "max_tokens": 1024,
+        "max_retries": 1,
+        "retry_backoff_seconds": 1,
+    },
+    "eval": {
+        "provider": "mock",
+        "model": "mock-eval-v1",
+        "temperature": 0,
+        "max_tokens": 1024,
+        "max_retries": 1,
+        "retry_backoff_seconds": 1,
+    },
+}
+DEFAULT_TASK_RULES = {"disallow_rewrite_without_visible_report": False}
+DEFAULT_TASK_EXPORTS = {
+    "train_format": "chatml_jsonl",
+    "eval_format": "promptfoo_jsonl",
+    "student_format": "chatml_jsonl",
+}
+DEFAULT_TASK_LABELS = ["primary_intent", "followup_request", "needs_clarification"]
+DEFAULT_TASK_SCENARIOS = [
+    {
+        "intent": "primary_intent",
+        "difficulty": "medium",
+        "tags": ["custom", "bootstrap"],
+        "context": {
+            "has_visible_report": True,
+            "previous_report_summary": "The user is asking about a newly defined task.",
+            "dialogue_stage": "standalone",
+            "language": "zh",
+        },
+        "templates": [
+            "请围绕当前主题生成一条高质量中文样本。",
+            "构造一条包含明确目标与约束的任务请求。",
+        ],
+        "generation_count": 2,
+    }
+]
+DEFAULT_GENERATOR_PROMPT = """你是一个蒸馏数据生成器。
+
+任务名: {task_name}
+主题: {theme}
+标签候选: {labels}
+
+请根据给定 scenario 生成高质量用户输入样本，输出 JSON：
+{{"items":[{{"user_text":"...", "label_hint":"...", "meta":{{}}}}]}}
+"""
+DEFAULT_TEACHER_PROMPT = """你是一个严格的标注教师。
+
+任务名: {task_name}
+主题: {theme}
+可用标签: {labels}
+
+请阅读输入并输出 JSON：
+{{"label":"...", "reason":"...", "confidence":0.0}}
+"""
+DEFAULT_PROMPTFOO_CONFIG = {
+    "description": "custom task promptfoo eval",
+    "dataforge": {"command": ["promptfoo"]},
+    "providers": ["echo"],
+    "prompts": ["{{predicted_json}}"],
+    "tests": "file://__DATAFORGE_EVAL_FOR_PROMPTFOO__",
+}
 
 
 @dataclass
@@ -73,8 +152,12 @@ class TaskConfig:
     config_path: Path
 
     @property
-    def runtime(self) -> dict[str, Any]:
+    def raw_runtime(self) -> dict[str, Any]:
         return self.config.get("runtime", {})
+
+    @property
+    def runtime(self) -> dict[str, Any]:
+        return resolve_runtime_map(self.project_root, self.raw_runtime)
 
     @property
     def rules(self) -> dict[str, Any]:
@@ -94,6 +177,102 @@ class TaskConfig:
             return self.resolved_paths[key]
         except KeyError as exc:
             raise KeyError(f"Unknown path key: {key}") from exc
+
+
+def validate_task_name(task_name: str) -> str:
+    normalized = task_name.strip()
+    if not normalized:
+        raise ValueError("task.name cannot be empty")
+    if not TASK_NAME_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            "task.name must match ^[a-z0-9][a-z0-9_-]*$ so it can be used as a task directory name"
+        )
+    return normalized
+
+
+def build_task_paths(task_name: str) -> dict[str, str]:
+    task_name = validate_task_name(task_name)
+    base = f"tasks/{task_name}/configs"
+    return {
+        "labels": f"{base}/labels.yaml",
+        "scenario_matrix": f"{base}/scenario_matrix.yaml",
+        "generator_prompt": f"{base}/generator_prompt.txt",
+        "teacher_prompt": f"{base}/teacher_prompt.txt",
+        "promptfoo": f"{base}/promptfoo.yaml",
+    }
+
+
+def build_default_task_definition(task_name: str) -> dict[str, Any]:
+    task_name = validate_task_name(task_name)
+    labels = list(DEFAULT_TASK_LABELS)
+    return {
+        "task": {
+            "name": task_name,
+            "theme": f"{task_name}_theme",
+            "language": "zh",
+            "task_type": "classification",
+            "entry_schema": "conversation_action",
+        },
+        "runtime": {
+            stage: dict(config)
+            for stage, config in DEFAULT_TASK_RUNTIME.items()
+        },
+        "rules": dict(DEFAULT_TASK_RULES),
+        "exports": dict(DEFAULT_TASK_EXPORTS),
+        "labels": labels,
+        "scenarios": [
+            {
+                **scenario,
+                "tags": list(scenario.get("tags", [])),
+                "context": dict(scenario.get("context", {})),
+                "templates": list(scenario.get("templates", [])),
+            }
+            for scenario in DEFAULT_TASK_SCENARIOS
+        ],
+        "generator_prompt": DEFAULT_GENERATOR_PROMPT.format(
+            task_name=task_name,
+            theme=f"{task_name}_theme",
+            labels=", ".join(labels),
+        ),
+        "teacher_prompt": DEFAULT_TEACHER_PROMPT.format(
+            task_name=task_name,
+            theme=f"{task_name}_theme",
+            labels=", ".join(labels),
+        ),
+    }
+
+
+def create_task_scaffold(project_root: Path, definition: dict[str, Any]) -> TaskConfig:
+    task_name = validate_task_name(str(definition["task"]["name"]))
+    task_root = (project_root / "tasks" / task_name).resolve()
+    config_dir = task_root / "configs"
+    config_path = config_dir / "task.yaml"
+    if task_root.exists():
+        raise FileExistsError(f"Task already exists or target directory is occupied: {task_root}")
+
+    config_dir.mkdir(parents=True, exist_ok=False)
+    (task_root / "runs").mkdir(parents=True, exist_ok=True)
+
+    task_config = {
+        "name": task_name,
+        "theme": definition["task"]["theme"],
+        "language": definition["task"]["language"],
+        "task_type": definition["task"]["task_type"],
+        "entry_schema": definition["task"]["entry_schema"],
+        "runtime": definition["runtime"],
+        "paths": build_task_paths(task_name),
+        "rules": definition["rules"],
+        "exports": definition["exports"],
+    }
+
+    write_yaml(config_path, task_config)
+    write_yaml(config_dir / "labels.yaml", {"labels": definition["labels"]})
+    write_yaml(config_dir / "scenario_matrix.yaml", {"scenarios": definition["scenarios"]})
+    write_text(config_dir / "generator_prompt.txt", definition["generator_prompt"])
+    write_text(config_dir / "teacher_prompt.txt", definition["teacher_prompt"])
+    write_yaml(config_dir / "promptfoo.yaml", DEFAULT_PROMPTFOO_CONFIG)
+
+    return load_task_config(project_root, task_name)
 
 
 def discover_tasks(project_root: Path) -> list[str]:
@@ -149,6 +328,10 @@ class TaskRun:
     @property
     def runtime(self) -> dict[str, Any]:
         return self.task.runtime
+
+    @property
+    def raw_runtime(self) -> dict[str, Any]:
+        return self.task.raw_runtime
 
     @property
     def rules(self) -> dict[str, Any]:

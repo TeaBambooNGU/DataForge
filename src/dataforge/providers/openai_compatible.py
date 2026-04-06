@@ -29,6 +29,17 @@ def _chat_completions_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
+def _models_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/models"):
+        return normalized
+    if normalized.endswith("/chat/completions"):
+        return f"{normalized[: -len('/chat/completions')]}/models"
+    if normalized.endswith("/v1"):
+        return f"{normalized}/models"
+    return f"{normalized}/models"
+
+
 def _merge_optional_runtime_fields(payload: dict[str, Any], runtime: dict[str, Any]) -> dict[str, Any]:
     for field in ("seed", "top_p", "max_tokens", "presence_penalty", "frequency_penalty"):
         if field in runtime:
@@ -157,6 +168,84 @@ class OpenAICompatibleChatClient:
         if last_error is not None:
             raise OpenAICompatibleError(str(last_error)) from last_error
         raise OpenAICompatibleError("OpenAI-compatible request failed without an explicit error")
+
+    def _list_models_once(self, runtime: dict[str, Any]) -> list[dict[str, Any]]:
+        api_key_env = runtime.get("api_key_env", "OPENAI_API_KEY")
+        base_url_env = runtime.get("base_url_env", "OPENAI_BASE_URL")
+        api_key = runtime.get("api_key") or os.environ.get(api_key_env)
+        base_url = runtime.get("base_url") or os.environ.get(base_url_env) or "https://api.openai.com/v1"
+        timeout = runtime.get("timeout_seconds", 60)
+
+        if not api_key:
+            raise OpenAICompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
+
+        req = request.Request(
+            _models_url(base_url),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="GET",
+        )
+        try:
+            with self._opener(req, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            retry_after = _parse_retry_after(exc.headers.get("Retry-After")) if exc.headers else None
+            message = f"HTTP {exc.code} from openai-compatible endpoint: {detail}"
+            if exc.code in _retry_status_codes(runtime):
+                raise RetryableOpenAICompatibleError(
+                    f"{message} [retryable]"
+                    if retry_after is None
+                    else f"{message} [retryable after {retry_after}s]",
+                    retry_after=retry_after,
+                ) from exc
+            raise OpenAICompatibleError(message) from exc
+        except error.URLError as exc:
+            raise RetryableOpenAICompatibleError(
+                f"Failed to reach openai-compatible endpoint: {exc.reason}"
+            ) from exc
+
+        items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            raise OpenAICompatibleError(f"Unexpected models response: {payload}")
+
+        models: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, str):
+                model_id = item.strip()
+                if model_id:
+                    models.append({"id": model_id})
+                continue
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id", "")).strip()
+            if not model_id:
+                continue
+            models.append(
+                {
+                    "id": model_id,
+                    "display_name": str(item.get("display_name", "")).strip() or None,
+                    "created": item.get("created"),
+                }
+            )
+        return models
+
+    def list_models(self, runtime: dict[str, Any]) -> list[dict[str, Any]]:
+        max_retries = _default_retry_count(runtime)
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self._list_models_once(runtime)
+            except RetryableOpenAICompatibleError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    break
+                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+        if last_error is not None:
+            raise OpenAICompatibleError(str(last_error)) from last_error
+        raise OpenAICompatibleError("OpenAI-compatible models request failed without an explicit error")
 
 
 def _parse_json_payload(content: str) -> Any:

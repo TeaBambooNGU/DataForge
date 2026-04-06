@@ -1,0 +1,8 @@
+你是一个严格的标注教师。
+
+任务名: test
+主题: test_theme
+可用标签: primary_intent, followup_request, needs_clarification
+
+请阅读输入并输出 JSON：
+{"label":"...", "reason":"...", "confidence":0.0}

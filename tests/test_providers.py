@@ -11,6 +11,7 @@ from dataforge.providers.anthropic_compatible import (
     AnthropicCompatibleGeneratorProvider,
     AnthropicCompatibleTeacherProvider,
     MiniMaxGeneratorProvider,
+    _models_url as _anthropic_models_url,
     _messages_url,
 )
 from dataforge.providers.openai_compatible import (
@@ -20,6 +21,7 @@ from dataforge.providers.openai_compatible import (
     OpenAICompatibleGeneratorProvider,
     OpenAICompatibleTeacherProvider,
     _chat_completions_url,
+    _models_url as _openai_models_url,
 )
 
 
@@ -77,6 +79,20 @@ def test_messages_url_normalization() -> None:
     assert _messages_url("https://relay.example.com/v1/") == "https://relay.example.com/v1/messages"
     assert _messages_url("https://api.minimaxi.com/anthropic") == "https://api.minimaxi.com/anthropic/v1/messages"
     assert _messages_url("https://relay.example.com/v1/messages") == "https://relay.example.com/v1/messages"
+
+
+def test_openai_models_url_normalization() -> None:
+    assert _openai_models_url("https://relay.example.com/v1") == "https://relay.example.com/v1/models"
+    assert _openai_models_url("https://relay.example.com/v1/") == "https://relay.example.com/v1/models"
+    assert _openai_models_url("https://relay.example.com/v1/chat/completions") == "https://relay.example.com/v1/models"
+    assert _openai_models_url("https://relay.example.com/v1/models") == "https://relay.example.com/v1/models"
+
+
+def test_anthropic_models_url_normalization() -> None:
+    assert _anthropic_models_url("https://relay.example.com") == "https://relay.example.com/v1/models"
+    assert _anthropic_models_url("https://relay.example.com/v1") == "https://relay.example.com/v1/models"
+    assert _anthropic_models_url("https://relay.example.com/v1/") == "https://relay.example.com/v1/models"
+    assert _anthropic_models_url("https://relay.example.com/v1/models") == "https://relay.example.com/v1/models"
 
 
 class _FakeClient:
@@ -475,6 +491,29 @@ def test_openai_compatible_chat_client_does_not_retry_on_400() -> None:
     assert opener.calls == 1
 
 
+def test_openai_compatible_chat_client_lists_models() -> None:
+    opener = _SequenceOpener(
+        [
+            _FakeHTTPResponse(
+                '{"data":[{"id":"gpt-5.4","created":1740787200},{"id":"text-embedding-3-large","created":1740700800}]}'
+            )
+        ]
+    )
+    client = OpenAICompatibleChatClient(opener=opener, sleeper=lambda _: None)
+    models = client.list_models(
+        {
+            "api_key": "test-key",
+            "base_url": "https://relay.example.com/v1",
+            "max_retries": 0,
+        }
+    )
+    assert models == [
+        {"id": "gpt-5.4", "display_name": None, "created": 1740787200},
+        {"id": "text-embedding-3-large", "display_name": None, "created": 1740700800},
+    ]
+    assert opener.calls == 1
+
+
 def test_anthropic_compatible_chat_client_retries_on_503() -> None:
     opener = _SequenceOpener(
         [
@@ -533,4 +572,27 @@ def test_anthropic_compatible_chat_client_does_not_retry_on_400() -> None:
         assert "HTTP 400" in str(exc)
     else:
         raise AssertionError("Expected AnthropicCompatibleError")
+    assert opener.calls == 1
+
+
+def test_anthropic_compatible_chat_client_lists_models() -> None:
+    opener = _SequenceOpener(
+        [
+            _FakeHTTPResponse(
+                '{"data":[{"id":"claude-3-7-sonnet-20250219","created_at":"2025-02-19T00:00:00Z"},{"id":"claude-3-5-haiku-20241022","created_at":"2024-10-22T00:00:00Z"}]}'
+            )
+        ]
+    )
+    client = AnthropicCompatibleClient(opener=opener, sleeper=lambda _: None)
+    models = client.list_models(
+        {
+            "api_key": "test-key",
+            "base_url": "https://relay.example.com/v1",
+            "max_retries": 0,
+        }
+    )
+    assert models == [
+        {"id": "claude-3-7-sonnet-20250219", "display_name": None, "created_at": "2025-02-19T00:00:00Z"},
+        {"id": "claude-3-5-haiku-20241022", "display_name": None, "created_at": "2024-10-22T00:00:00Z"},
+    ]
     assert opener.calls == 1
