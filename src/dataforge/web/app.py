@@ -1178,14 +1178,18 @@ def _ensure_command_is_runnable(task: TaskConfig, command: str, task_run: TaskRu
 def create_app(project_root: Path | None = None) -> FastAPI:
     resolved_root = (project_root or Path.cwd()).resolve()
     frontend_dir = resolved_root / "frontend"
-    if not frontend_dir.exists():
-        raise FileNotFoundError(f"Frontend directory not found: {frontend_dir}")
+    frontend_dist_dir = frontend_dir / "dist"
+    if not frontend_dist_dir.exists():
+        raise FileNotFoundError(
+            f"Frontend build directory not found: {frontend_dist_dir}. "
+            "Run `cd frontend && npm install && npm run build` first."
+        )
 
     load_dotenv(resolved_root / ".env")
 
     app = FastAPI(title="DataForge Workbench", version="0.1.0")
     app.state.project_root = resolved_root
-    app.mount("/assets", StaticFiles(directory=str(frontend_dir)), name="assets")
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist_dir)), name="assets")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -1400,7 +1404,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def workbench() -> FileResponse:
-        return FileResponse(frontend_dir / "index.html")
+        return FileResponse(frontend_dist_dir / "index.html")
 
     return app
 

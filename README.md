@@ -9,7 +9,7 @@ Current MVP scope:
 - task-driven offline distillation pipelines
 - run-level artifact versioning under `tasks/<task>/runs/<run_id>/`
 - local CLI for stage execution
-- local FastAPI + static web workbench for inspection and editing
+- local FastAPI + React workbench for inspection and editing
 - human review to gold-set workflow
 - Promptfoo-backed offline evaluation
 - configurable train/eval export layer and student training bundle export
@@ -31,7 +31,7 @@ The first built-in task is `report-intent-distill`, a 3-class intent classificat
 - Config-driven `train_format` / `eval_format` export rendering plus version metadata files
 - Cross-run leakage blocking against historical `gold / eval / hard_cases`
 - Standard `student-export` bundle under `training/`
-- Local browser workbench for task config editing, artifact browsing, review editing, and run management
+- Local browser workbench with task-first entry flow, run cockpit, artifact browsing, review editing, and provider deck
 
 ## Status
 
@@ -96,7 +96,18 @@ uv run dataforge eval --task report-intent-distill
 uv run dataforge student-export --task report-intent-distill
 ```
 
-### Start The Local Workbench
+### Build And Start The Local Workbench
+
+Build the React frontend first:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+Then start the local FastAPI workbench:
 
 ```bash
 uv run dataforge-web --host 127.0.0.1 --port 8000
@@ -104,11 +115,13 @@ uv run dataforge-web --host 127.0.0.1 --port 8000
 
 The web workbench lets you:
 
-- browse tasks and runs
+- choose or create a task from the home screen
+- enter a run cockpit after selecting a task
 - inspect artifacts
 - edit task config files
 - edit review records
 - trigger pipeline stages from the browser
+- open provider settings from the top-right gear icon
 
 ## CLI Usage
 
@@ -217,8 +230,10 @@ tasks/
 
 frontend/
   index.html
-  app.js
-  styles.css
+  package.json
+  vite.config.js
+  src/
+  dist/
 
 docs/
   architecture.md
@@ -232,7 +247,7 @@ Responsibilities:
 - `src/dataforge/pipelines/`: stage implementations
 - `src/dataforge/providers/`: provider adapters
 - `tasks/<task>/configs/`: task-specific prompts, labels, rules, and task metadata
-- `frontend/`: static browser workbench
+- `frontend/`: React + Vite browser workbench source and build output
 - `docs/`: architecture, design, and development planning
 
 ## Task Configuration

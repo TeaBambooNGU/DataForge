@@ -7,13 +7,13 @@
 - 当前形态:
   1. 保留命令行主入口，适合脚本化或批处理执行。
   2. 本地 FastAPI 工作台负责把 tasks、runs、artifacts、review、task scaffold、全局 LLM 设置与连通性测试能力暴露给浏览器。
-  3. 原生静态前端工作台直接消费本地 API，在页面里完成 task 新建/删除、run 切换、stage 执行、产物浏览、人工复核、任务配置编辑与全局模型配置维护。
+  3. React + Vite 前端工作台直接消费本地 API，以 `task home -> run cockpit` 两段式界面完成 task 新建/删除、run 切换、stage 执行、产物浏览、人工复核、任务配置编辑与全局模型配置维护。
 - 主要能力:
   1. 通过统一 CLI 或 Web API 调度多阶段 pipeline。
   2. 通过任务配置驱动 provider、规则、静态资源路径和导出格式。
   3. 通过 `run_id` 对每次运行的中间产物、报告与 manifest 做版本化管理。
   4. 支持 `mock`、`openai_compatible`、`anthropic_compatible`、`minimax` 四类 provider 接入方式。
-  5. 支持本地浏览器工作台，以任务页签和侧边栏 settings rail 组合查看任务定义、运行控制、运行产物、人工复核与全局设置。
+  5. 支持本地浏览器工作台，以 task 首屏和 run 工作舱组织交互；全局 provider 设置收纳在顶部栏右上角齿轮抽屉中。
   6. 支持在浏览器里新建 task scaffold，自动生成 `task.yaml`、`labels.yaml`、`scenario_matrix.yaml`、`generator_prompt.txt`、`teacher_prompt.txt` 与 `promptfoo.yaml` 默认模板。
   7. 支持在浏览器里直接编辑任务配置文件，并通过 `runtime_catalog` 辅助选择 provider、模型与 provider-specific 字段。
   8. 支持在浏览器里维护全局 LLM 设置，包括 builtin provider 凭据、默认模型、自定义 provider alias、新增/删除 alias、即时连通性测试，以及测试时自动扫描模型列表并回填最新模型。
@@ -32,7 +32,7 @@
   3. `tasks/<task>/runs/<run_id>/gold/*`：gold 集与 hard cases。
   4. `tasks/<task>/runs/<run_id>/exports/*` 与 `reports/*`：训练导出、评测导出、版本元数据、预测结果、结构化 eval 摘要、Promptfoo 运行时配置、Promptfoo 原始结果、评测总结、stage manifest。
   5. `tasks/<task>/runs/<run_id>/training/*`：student 标准训练输入与训练版本元数据。
-  6. `frontend/*`：本地工作台静态资源，其中 `frontend/js/` 与 `frontend/styles/` 已按职责拆分。
+  6. `frontend/`：本地工作台前端工程，包含 Vite 入口、React 源码与构建产物 `frontend/dist/`。
   7. `.dataforge/runtime_providers.json`：自定义全局 provider alias catalog。
   8. `.dataforge/runtime_provider_models.json`：各 provider 扫描得到的模型列表覆盖文件，供 runtime catalog 与全局设置页回显。
 
@@ -47,18 +47,18 @@
   5. CLI 实现在 [src/dataforge/cli.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/cli.py)，Web 入口实现在 [src/dataforge/web/app.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/web/app.py)。
 - 启动流程概述:
   1. CLI `main()` 解析参数后，通过 `load_dotenv()` 加载项目根目录 `.env`，再经 `load_task_config()` 读取 `tasks/<task>/configs/task.yaml`，最后通过 `resolve_task_run()` 选择新建或复用 run 并分发到对应 pipeline。
-  2. Web `create_app()` 会校验 `frontend/` 目录存在、加载 `.env`、挂载 `/assets` 静态资源并注册 `/api/settings/llm`、`/api/settings/llm/test`、`/api/tasks`、`/api/tasks/{task}/runs/*`、`/api/tasks/{task}/runs/{run_id}/review-records` 等路由；根路由 `/` 直接返回 [frontend/index.html](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/index.html)，同时提供 `/api/health` 健康检查。
+  2. Web `create_app()` 会校验 `frontend/dist/` 构建产物存在、加载 `.env`、挂载 `/assets` 静态资源并注册 `/api/settings/llm`、`/api/settings/llm/test`、`/api/tasks`、`/api/tasks/{task}/runs/*`、`/api/tasks/{task}/runs/{run_id}/review-records` 等路由；根路由 `/` 直接返回 [frontend/dist/index.html](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/dist/index.html)，同时提供 `/api/health` 健康检查。
   3. `run-all` 在 CLI 和 Web 中语义一致，当前只串行执行 `generate -> classify -> filter-export -> review-export`，不会自动执行 `validate-review`、`build-gold`、`eval`。
 
 ### 核心模块
 - 模块划分:
   1. [src/dataforge/cli.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/cli.py)：CLI 参数解析与 pipeline 调度。
   2. [src/dataforge/web/app.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/web/app.py)：FastAPI 本地工作台，负责 health、task 列表/创建/删除、run 查询与删除、pipeline 执行代理、artifact 读取、review 读写、任务配置文件读写、全局 LLM 设置读写与 provider 连通性探测。
-  3. [frontend/index.html](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/index.html)：工作台壳层，定义侧边栏、workspace header、任务页签与 settings rail 入口。
-  4. [frontend/app.js](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/app.js)：前端顶层状态机，负责 task/run/settings 三类视图切换、全局刷新、命令调度、task/run 创建删除与模块编排。
-  5. [frontend/js/core/](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/js/core)：基础设施层，封装 API 调用、常量、任务配置归一化与公共工具。
-  6. [frontend/js/modules/task-spec.js](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/js/modules/task-spec.js)、[frontend/js/modules/review.js](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/js/modules/review.js)、[frontend/js/modules/artifacts.js](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/js/modules/artifacts.js)：分别处理任务定义与全局 LLM 设置、人工复核、产物结构化浏览。
-  7. [frontend/styles/index.css](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/styles/index.css)、[frontend/styles/tokens.css](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/styles/tokens.css)、[frontend/styles/base.css](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/styles/base.css)、[frontend/styles/theme.css](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/styles/theme.css)：样式入口、设计 token、基础布局与主题层。
+  3. [frontend/index.html](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/index.html)：Vite HTML 入口，负责注入字体资源与 React 主入口。
+  4. [frontend/src/main.jsx](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/src/main.jsx)：React 启动入口，挂载根组件并加载全局样式。
+  5. [frontend/src/App.jsx](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/src/App.jsx)：前端顶层状态机与组件编排，负责 task home、run cockpit、artifacts、review、task config 与 provider drawer 的状态切换和 API 调用。
+  6. [frontend/src/styles.css](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/src/styles.css)：前端设计 token、布局、动效与组件外观。
+  7. [frontend/vite.config.js](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/vite.config.js) 与 [frontend/package.json](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/package.json)：前端构建输出路径、依赖与脚本定义。
   8. [src/dataforge/core/registry.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/registry.py)：任务发现、默认 scaffold 生成、`TaskConfig`/`TaskRun` 建模、run 状态推进、产物路径映射。
   9. [src/dataforge/core/runtime_catalog.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/runtime_catalog.py)：builtin/custom provider catalog、推荐模型、provider 字段目录、运行时默认值解析，以及扫描模型列表的持久化覆盖。
   10. [src/dataforge/core/env.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/src/dataforge/core/env.py)：`.env` 读取、增量写回、进程环境应用与“外部已导出变量优先”策略。
@@ -79,10 +79,10 @@
   5. `web/app.py` 中 `_save_global_llm_settings()`、`_resolve_global_llm_runtime()` 与 `_probe_llm_connection()` 负责 builtin/custom provider 设置保存、运行时解析与连通性测试；其中 `_probe_llm_connection()` 会先尝试扫描远端模型列表、推断最新生成模型，再执行 probe，并兼容“尚未保存的 custom provider 用即时表单值探活”。`_delete_run()`、`_write_runs_index()`、`_sync_latest_run_pointer()` 负责删除 run 后维持 run 索引一致性，`_delete_task()` 则负责删除整个 task 目录并重新发现剩余任务。
   6. `core/runtime_catalog.py` 负责把 builtin provider、`.dataforge/runtime_providers.json` 中的 custom alias 与 `.dataforge/runtime_provider_models.json` 中的模型覆盖合并成统一 catalog，并为前端编辑器提供 `stages`、`fields`、`providers` 与推荐模型。
   7. `core/env.py` 负责 `.env` 的增量更新与环境变量注入；`load_dotenv()` 不会覆盖外部已经导出的同名环境变量。
-  8. `frontend/app.js` 负责前端状态机，围绕 `selectedTask`、`selectedRun`、`taskSpec`、`artifactPayload`、`reviewRecords`、`isEditingTaskConfig`、`llmSettings`、`activeTab`、`deletingTaskName` 等状态组织页面更新，并维护 `rawCandidateViewMode`、`rawCandidateGroupBy` 等结构化浏览状态。
-  9. `frontend/index.html` 当前采用任务页签加侧边栏 settings rail 的工作台布局，将“任务定义”“运行控制”“运行产物”“人工复核”拆成独立面板，同时为 workspace 级全局模型配置预留独立入口。
-  10. `frontend/js/modules/task-spec.js` 同时负责 task 配置编辑与全局 LLM 设置面板，支持 provider alias 新增/删除、即时探测、运行时推荐模型回填，以及 task scaffold 创建后的二次编辑；其中 custom provider 的 `Provider ID` 会自动规范化为合法 id，并派生 `BASE_URL/API_KEY` env key，展示名也直接跟随 `Provider ID`。
-  11. `frontend` 在产物展示上默认只展示实际存在的 artifact，并隐藏 `*_manifest`，结构化浏览优先于原始 JSONL 转储；`ARTIFACT_EXPLANATIONS` 为每个 artifact 提供“用途/阶段/阅读提示”说明。
+  8. `frontend/src/App.jsx` 负责前端状态机，围绕 `screen`、`activeTask`、`selectedRun`、`taskConfigDraft`、`settingsDraft`、`artifactPayload`、`reviewPayload` 等状态组织页面更新。
+  9. 前端默认首页只展示 task 选择与新建入口；用户选中 task 后才进入 run 工作舱，再通过上方子页签切换 run、artifacts、review 与 task config。
+  10. 全局 LLM 设置被收纳到顶部栏右上角齿轮抽屉，支持 builtin/custom provider 的新增、删除、即时探活、模型扫描与默认模型回填；custom provider 的 env key 仍由 `Provider ID` 自动派生。
+  11. 前端在产物展示上默认只展示实际存在的 artifact，采用简化后的结构化记录卡片与 JSON/Text 预览，不再保留旧版原生工作台里的多种分类视图状态机。
   12. `core/review.py` 中 `group_review_records()` 与 `merge_review_records()` 负责将同一样本的多轮复核记录按输入顺序聚合，再由 `build_gold` 只消费每个 `sample_id` 的最终状态，避免重复产出 gold 样本。
   13. `core/eval_runner.py` 中 `build_promptfoo_runtime_config()` 会把任务侧 `promptfoo.yaml` 渲染为 run 级配置文件，`run_promptfoo_eval()` 则调用本机 `promptfoo eval` 并回收结果摘要，`build_eval_result()` 则把评测结果转成结构化 `eval_result.json`。
   14. `core/exporters.py` 负责把内部样本转换为 `chatml_jsonl`、`prediction_jsonl`、`promptfoo_jsonl` 等目标格式，主流程只消费导出接口，不直接写死格式。
@@ -189,7 +189,7 @@
   2. 若使用真实 provider，必须提供对应 API key 与 base URL 环境变量。
   3. `eval` 阶段若要执行 Promptfoo，要求本机环境中可直接调用 `promptfoo` 命令。
   4. 当前项目未接入数据库、消息队列或远程存储，所有产物均写入本地文件系统。
-  5. 前端不经过构建流程，依赖浏览器直接加载 `frontend/index.html`、`frontend/app.js`、`frontend/js/*` 与 `frontend/styles/index.css`。
+  5. 前端需要先执行 `cd frontend && npm install && npm run build` 产出 `frontend/dist/`，FastAPI 再通过 `/assets` 挂载构建后的静态资源。
   6. `.env` 中的值只会作为默认值加载；若同名变量已在外部环境中导出，`load_dotenv()` 不会覆盖它。
 
 ### 运行流程
@@ -200,20 +200,16 @@
   4. 如需交给 student 训练，再运行 `student-export` 输出 `training/student_train.jsonl` 与 `training/metadata.json`。
 - Web 工作流:
   1. 通过 `uv run dataforge-web --host 127.0.0.1 --port 8013` 启动本地工作台。
-  2. 浏览器打开首页后，工作台会先刷新全局 LLM 设置与 task 列表；左侧可切 task / run，顶部通过页签在“运行控制”“任务定义”“运行产物”“人工复核”之间切换，侧边栏单独进入“全局设置”。
-  3. 用户可通过“新建任务”按钮创建 scaffold；创建成功后页面自动进入该 task 的编辑态，继续完善 task metadata、runtime、rules、exports、labels、scenario matrix 和 prompts。
-  4. “运行控制”页签直接触发 stage，替代部分终端操作。
-  5. “任务定义”页签默认展示 task 概览、labels、rules、exports、runtime、scenario matrix 和 generator/teacher prompt 的只读视图。
-  6. 用户点击“编辑配置”后，页面切入独立编辑态，可修改基础信息、runtime、规则、导出、labels、scenario matrix 和 prompts；保存后退出编辑态，取消则回退草稿。
-  7. “全局设置”视图允许维护 builtin provider 凭据、默认模型与 custom provider alias，并可对每个 provider 直接发起连通性测试；测试成功后会自动同步模型列表并把最新模型写入 `Default Model`。
-  8. “运行产物”页签只展示实际存在的 artifact，默认优先结构化浏览，不展示 `*_manifest`，并在主视图上方给出该 artifact 的阶段、用途与阅读提示。
-  9. custom provider 编辑区中只保留 `Provider ID`、`Family`、`Badge`、`Description`、`Base URL`、`API Key` 与 `Default Model` 等必要字段；展示名直接使用 `Provider ID`，`BASE_URL/API_KEY` env key 只读展示。
-  10. `raw_candidates` 在产物页支持表格视图与分类视图，可按 `label_hint`、`difficulty`、`has_visible_report`、`dialogue_stage` 进行分组排查。
-  11. `rejected_samples` 在产物页会先汇总 `rejection_reason`，再展示明细表，便于定位主要损耗来源。
-  12. 用户可在 task 列表中直接删除整个 task，删除后页面会自动刷新任务列表，并在删除当前 task 时切换到剩余可用 task 或清空工作区。
-  13. 用户可在 run 列表中直接删除不需要的历史 run，删除后页面会自动刷新并切换到剩余可用 run。
-  14. “人工复核”页签可直接编辑并保存 `review_results.jsonl`。
-  15. 每次运行的索引保存在 `tasks/<task>/runs/index.json`，最新 run 指针保存在 `latest.json`。
+  2. 浏览器打开首页后，工作台会先刷新全局 LLM 设置与 task 列表；首页只展示 task 入口场和新建 task 入口。
+  3. 用户点击 task 卡片后，页面进入该 task 的 run 工作舱，左侧为 run reel，右侧为 run / artifacts / review / task config 子页签。
+  4. 用户可通过首屏“Create A Fresh Track”创建 scaffold；创建成功后页面自动进入该 task 的工作舱。
+  5. Run 子页负责触发 stage，替代部分终端操作，并展示当前 run 的阶段轨迹与状态摘要。
+  6. Task Config 子页使用 JSON/Text 编辑器集中维护 task metadata、runtime、rules、exports、labels、scenario matrix 和 prompts。
+  7. 顶部栏右上角齿轮抽屉允许维护 builtin provider 凭据、默认模型与 custom provider alias，并可对每个 provider 直接发起连通性测试；测试成功后会自动同步模型列表并把最新模型写入 `Default Model`。
+  8. Artifacts 子页只展示实际存在的 artifact，采用简化结构化预览和 JSON/Text 查看器。
+  9. 用户可在 task 首屏直接删除整个 task；也可在 run 工作舱左侧删除历史 run。
+  10. Review 子页可直接编辑并保存 `review_results.jsonl`。
+  11. 每次运行的索引保存在 `tasks/<task>/runs/index.json`，最新 run 指针保存在 `latest.json`。
 - 异常/边界处理:
   1. 若非 `generate`/`run-all` 且没有历史 run，`resolve_task_run()` 会直接报错，要求先创建 run 或显式传入 `run_id`。
   2. provider 返回非 JSON 或缺失 `action` 时，会把 `parse_ok` 置为 `False` 并写入错误码，而不是静默吞掉异常。
@@ -226,7 +222,7 @@
 - 观测与日志:
   1. 当前没有统一日志系统或链路追踪。
   2. 可观测性主要依赖 `reports/manifests/*.json`、`reports/eval_result.json`、`exports/*_metadata.json`、`reports/promptfoo/results.json`、`eval_summary.md`、`confusion_analysis.md`、`review_validation.md`、`runs/index.json` 与前端消息条。
-  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程，`tests/test_eval_runner.py` 覆盖 Promptfoo 集成与结构化摘要，`tests/test_exporters.py` 覆盖导出层，`tests/test_student_export.py` 与 `tests/test_dedupe.py` 分别覆盖 student 出口与防泄漏逻辑，`tests/test_web_app.py` 额外覆盖 task scaffold、runtime catalog、task 删除、未保存 custom provider 探活、模型扫描与全局 LLM 设置序列化/持久化；前端当前通过 `node --check frontend/js/modules/task-spec.js` 做全局设置模块的最小语法校验。
+  3. 从测试与校验角度，`tests/test_pipeline_smoke.py` 覆盖完整 smoke 流程，`tests/test_eval_runner.py` 覆盖 Promptfoo 集成与结构化摘要，`tests/test_exporters.py` 覆盖导出层，`tests/test_student_export.py` 与 `tests/test_dedupe.py` 分别覆盖 student 出口与防泄漏逻辑，`tests/test_web_app.py` 额外覆盖 task scaffold、runtime catalog、task 删除、未保存 custom provider 探活、模型扫描与全局 LLM 设置序列化/持久化；前端通过 `npm run build` 做构建级校验。
 
 ## 改动概要/变更记录
 
@@ -238,6 +234,15 @@
   4. 更新边界与测试说明，补充 [tests/test_web_app.py](/Users/teabamboo/Documents/AIplusLLM/DataForge/tests/test_web_app.py) 对未保存 custom provider 探活、模型扫描回退与模型覆盖持久化的覆盖。
 - 变更动机/需求来源: 用户要求把当前最新代码同步到 `docs/architecture.md`，重点反映全局 LLM 设置这轮新增的模型扫描、custom provider 探活和 UI 简化后的真实实现。
 - 当前更新时间: 2026-04-06 00:00:43
+
+### 2026-04-06 21:00:00
+- 本次新增/更新要点:
+  1. 前端从原生静态 `app.js + js/modules + styles/*` 重构为 `React + Vite`，入口改为 [frontend/src/main.jsx](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/src/main.jsx) 与 [frontend/src/App.jsx](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/src/App.jsx)。
+  2. UI 信息架构改为 `task home -> run cockpit` 两段式流程，首页只处理 task 选择/创建，run、artifacts、review、task config 收纳到选中 task 后的工作舱。
+  3. 全局 provider 设置从旧侧边栏 rail 调整为顶部栏右上角齿轮抽屉，继续复用后端的 provider 探活、模型扫描与自定义 provider 持久化能力。
+  4. FastAPI 静态资源入口改为服务 [frontend/dist/index.html](/Users/teabamboo/Documents/AIplusLLM/DataForge/frontend/dist/index.html) 与 `/assets` 下的构建产物，启动前需要先执行前端构建。
+- 变更动机/需求来源: 用户要求“完全重新设计 UI 布局和颜色风格，使用 React 重构”，并明确无需兼容旧前端实现。
+- 当前更新时间: 2026-04-06 21:00:00
 
 ### 2026-04-05 22:34:01
 - 本次新增/更新要点:
