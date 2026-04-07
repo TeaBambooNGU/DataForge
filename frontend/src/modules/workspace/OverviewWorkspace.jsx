@@ -7,6 +7,7 @@ function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecomm
   const orderedActions = STAGE_ACTIONS.filter((action) => action.command !== "run-all");
   return orderedActions.map((action) => {
     const stageKey = action.command.replaceAll("-", "_");
+    const stagePayload = selectedRun?.stages?.[stageKey] || null;
     let status = "upcoming";
 
     if (action.command === "generate") {
@@ -21,6 +22,11 @@ function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecomm
 
     return {
       ...action,
+      stageKey,
+      stagePayload,
+      completedAt:
+        stagePayload?.completed_at || (action.command === "generate" ? selectedRun?.created_at : null),
+      stats: summarizeStageStats(stagePayload?.stats),
       status,
       summary:
         status === "done"
@@ -139,7 +145,7 @@ export default function OverviewWorkspace({
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel panel-wide">
         <div className="section-head">
           <div>
             <span className="eyebrow">Run Signal</span>
@@ -160,6 +166,19 @@ export default function OverviewWorkspace({
                 <span className="micro-chip">{item.status}</span>
               </div>
               <span className="field-hint">{item.summary}</span>
+              {item.status === "done" ? (
+                <div className="checklist-detail">
+                  <div className="checklist-detail-meta">
+                    <span>完成时间</span>
+                    <strong>{formatDate(item.completedAt)}</strong>
+                  </div>
+                  <div className="config-bullet-list compact-list checklist-detail-stats">
+                    {item.stats.map((statItem) => (
+                      <span key={`${item.stageKey}-${statItem}`}>{statItem}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -192,42 +211,6 @@ export default function OverviewWorkspace({
               ? `最近阶段是 ${selectedRun.last_stage}，建议优先看对应推荐 artifact。`
               : "刚创建的 run 还没有任何阶段输出。"}
           </span>
-        </div>
-      </section>
-
-      <section className="panel panel-wide">
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">Stage Trace</span>
-            <h2>已完成阶段</h2>
-          </div>
-        </div>
-        <div className="timeline">
-          {Object.entries(selectedRun?.stages || {}).length ? (
-            Object.entries(selectedRun.stages).map(([stageName, stagePayload]) => (
-              <article key={stageName} className="timeline-item">
-                <span>{stageName}</span>
-                <strong>{formatDate(stagePayload.completed_at)}</strong>
-                <p>
-                  {PIPELINE_STAGE_META[stageName.replaceAll("_", "-")]?.description || "阶段已完成。"}
-                </p>
-                <div className="config-bullet-list compact-list">
-                  <span>
-                    {PIPELINE_STAGE_META[stageName.replaceAll("_", "-")]?.actionHint ||
-                      "继续检查该阶段产物。"}
-                  </span>
-                  {summarizeStageStats(stagePayload.stats).map((item) => (
-                    <span key={`${stageName}-${item}`}>{item}</span>
-                  ))}
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="empty-board compact">
-              <strong>还没有完成阶段</strong>
-              <p>从 Forge Run 或 Run All 开始。</p>
-            </div>
-          )}
         </div>
       </section>
     </div>

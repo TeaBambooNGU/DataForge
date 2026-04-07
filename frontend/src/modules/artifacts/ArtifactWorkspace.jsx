@@ -39,143 +39,147 @@ export default function ArtifactWorkspace({
   return (
     <div className="panel-grid artifact-layout">
       <section className="panel artifact-sidebar">
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">Run Output</span>
-            <h2>Artifacts</h2>
+        <div className="artifact-sidebar-frame">
+          <div className="section-head">
+            <div>
+              <span className="eyebrow">Run Output</span>
+              <h2>Artifacts</h2>
+            </div>
           </div>
-        </div>
-        {selectedRun ? (
-          <div className="artifact-nav-overview">
-            <div className="artifact-nav-head">
-              <div>
-                <h3>Artifact Navigator</h3>
-                <p>按阶段聚类浏览当前 run 产物，优先查看推荐入口，再深入诊断。</p>
-              </div>
-              <span className="artifact-nav-count">{visibleArtifacts(selectedRun).length}</span>
-            </div>
-            <div className="artifact-nav-tools">
-              <input
-                className="search-input"
-                type="search"
-                value={artifactNavSearch}
-                onChange={(event) => setArtifactNavSearch(event.target.value)}
-                placeholder="搜索 artifact 名称或路径"
-              />
-              <select
-                className="filter-select"
-                value={artifactNavCategoryFilter}
-                onChange={(event) => setArtifactNavCategoryFilter(event.target.value)}
-              >
-                {artifactNavCategoryOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="artifact-nav-chip-row">
-              <span>{`last_stage: ${selectedRun.last_stage || "created"}`}</span>
-              <span>{`status: ${selectedRun.status || "-"}`}</span>
-              <span>{`${Object.keys(selectedRun.stages || {}).length}/7 stages`}</span>
-            </div>
-            {(() => {
-              const spotlightArtifacts = groupedRunArtifacts
-                .flatMap(([, items]) => items)
-                .filter((artifact) => recommendedArtifactKeys.has(artifact.key));
-              if (!spotlightArtifacts.length) {
-                return null;
-              }
-              return (
-                <div className="artifact-spotlight">
-                  <strong>Recommended Reads</strong>
-                  <div className="artifact-spotlight-row">
-                    {spotlightArtifacts.map((artifact) => (
-                      <button
-                        key={artifact.key}
-                        className={classNames(
-                          "artifact-spotlight-button",
-                          artifactKey === artifact.key && "is-active"
-                        )}
-                        type="button"
-                        aria-pressed={artifactKey === artifact.key}
-                        onClick={() => setArtifactKey(artifact.key)}
-                      >
-                        {artifact.key}
-                      </button>
-                    ))}
+          {selectedRun ? (
+            <div className="artifact-nav-overview">
+              <div className="artifact-nav-hero-card">
+                <div className="artifact-nav-head">
+                  <div>
+                    <h3>Artifact Navigator</h3>
+                    <p>按阶段聚类浏览当前 run 产物，优先查看推荐入口，再深入诊断。</p>
                   </div>
+                  <span className="artifact-nav-count">{visibleArtifacts(selectedRun).length}</span>
                 </div>
-              );
-            })()}
-
-            {groupedRunArtifacts.length ? (
-              <div className="artifact-list-group">
-                {groupedRunArtifacts.map(([category, items]) => {
-                  const categoryInfo = getArtifactCategoryInfo(category);
+                <div className="artifact-nav-tools">
+                  <input
+                    className="search-input"
+                    type="search"
+                    value={artifactNavSearch}
+                    onChange={(event) => setArtifactNavSearch(event.target.value)}
+                    placeholder="搜索 artifact 名称或路径"
+                  />
+                  <select
+                    className="filter-select"
+                    value={artifactNavCategoryFilter}
+                    onChange={(event) => setArtifactNavCategoryFilter(event.target.value)}
+                  >
+                    {artifactNavCategoryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="artifact-nav-chip-row">
+                  <span>{`last_stage: ${selectedRun.last_stage || "created"}`}</span>
+                  <span>{`status: ${selectedRun.status || "-"}`}</span>
+                  <span>{`${Object.keys(selectedRun.stages || {}).length}/7 stages`}</span>
+                </div>
+                {(() => {
+                  const spotlightArtifacts = groupedRunArtifacts
+                    .flatMap(([, items]) => items)
+                    .filter((artifact) => recommendedArtifactKeys.has(artifact.key));
+                  if (!spotlightArtifacts.length) {
+                    return null;
+                  }
                   return (
-                    <section key={category} className="artifact-nav-group">
-                      <div className="artifact-nav-group-head">
-                        <div>
-                          <h3>{categoryInfo.label}</h3>
-                          <p>{categoryInfo.description}</p>
-                        </div>
-                        <span className="artifact-nav-count">{items.length}</span>
-                      </div>
-                      <div className="artifact-nav-group-list">
-                        {items.map((artifact) => (
+                    <div className="artifact-spotlight">
+                      <strong>Recommended Reads</strong>
+                      <div className="artifact-spotlight-row">
+                        {spotlightArtifacts.map((artifact) => (
                           <button
                             key={artifact.key}
-                            className={classNames("artifact-item", artifactKey === artifact.key && "is-active")}
+                            className={classNames(
+                              "artifact-spotlight-button",
+                              artifactKey === artifact.key && "is-active"
+                            )}
                             type="button"
                             aria-pressed={artifactKey === artifact.key}
                             onClick={() => setArtifactKey(artifact.key)}
                           >
-                            <div className="artifact-item-head">
-                              <strong>{artifact.key}</strong>
-                              <span className="artifact-item-kind">{artifact.kind}</span>
-                            </div>
-                            <span className="artifact-item-role">
-                              {recommendedArtifactKeys.has(artifact.key) ? "recommended" : categoryInfo.label}
-                            </span>
-                            <span>{getArtifactListHint(artifact)}</span>
-                            <div
-                              className={classNames(
-                                "artifact-item-diagnostic",
-                                recommendedArtifactKeys.has(artifact.key) && "is-recommended"
-                              )}
-                            >
-                              <span>{artifact.relative_path}</span>
-                              <span className="artifact-item-badge">{formatBytes(artifact.size_bytes)}</span>
-                            </div>
+                            {artifact.key}
                           </button>
                         ))}
                       </div>
-                    </section>
+                    </div>
                   );
-                })}
+                })()}
               </div>
-            ) : (
-              <div className="empty-board compact">
-                <strong>没有匹配当前导航筛选的 artifact</strong>
-                <p>改搜索词或切回“全部分类”，再决定先读哪份文件。</p>
-              </div>
-            )}
-          </div>
-        ) : null}
 
-        {!selectedRun?.artifacts?.some((item) => item.exists) && (
-          <div className="empty-board compact">
-            <strong>没有可读 artifact</strong>
-            <p>先推进 run，再回来查看产物。</p>
-          </div>
-        )}
+              {groupedRunArtifacts.length ? (
+                <div className="artifact-list-group">
+                  {groupedRunArtifacts.map(([category, items]) => {
+                    const categoryInfo = getArtifactCategoryInfo(category);
+                    return (
+                      <section key={category} className="artifact-nav-group">
+                        <div className="artifact-nav-group-head">
+                          <div>
+                            <h3>{categoryInfo.label}</h3>
+                            <p>{categoryInfo.description}</p>
+                          </div>
+                          <span className="artifact-nav-count">{items.length}</span>
+                        </div>
+                        <div className="artifact-nav-group-list">
+                          {items.map((artifact) => (
+                            <button
+                              key={artifact.key}
+                              className={classNames("artifact-item", artifactKey === artifact.key && "is-active")}
+                              type="button"
+                              aria-pressed={artifactKey === artifact.key}
+                              onClick={() => setArtifactKey(artifact.key)}
+                            >
+                              <div className="artifact-item-head">
+                                <strong>{artifact.key}</strong>
+                                <span className="artifact-item-kind">{artifact.kind}</span>
+                              </div>
+                              <span className="artifact-item-role">
+                                {recommendedArtifactKeys.has(artifact.key) ? "recommended" : categoryInfo.label}
+                              </span>
+                              <span>{getArtifactListHint(artifact)}</span>
+                              <div
+                                className={classNames(
+                                  "artifact-item-diagnostic",
+                                  recommendedArtifactKeys.has(artifact.key) && "is-recommended"
+                                )}
+                              >
+                                <span>{artifact.relative_path}</span>
+                                <span className="artifact-item-badge">{formatBytes(artifact.size_bytes)}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-board compact">
+                  <strong>没有匹配当前导航筛选的 artifact</strong>
+                  <p>改搜索词或切回“全部分类”，再决定先读哪份文件。</p>
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {!selectedRun?.artifacts?.some((item) => item.exists) && (
+            <div className="empty-board compact">
+              <strong>没有可读 artifact</strong>
+              <p>先推进 run，再回来查看产物。</p>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="panel panel-wide">
         <div className="artifact-preview">
-          <div className="section-head">
-            <div>
+          <div className="section-head artifact-preview-head">
+            <div className="artifact-preview-title">
               <span className="eyebrow">Artifact Preview</span>
               <h2>{artifactKey || "选择 artifact"}</h2>
             </div>

@@ -23,29 +23,37 @@ export default function SettingsDrawer({
   return (
     <div className="overlay">
       <aside className="settings-drawer">
-        <div className="section-head">
-          <div>
+        <div className="settings-drawer-hero">
+          <div className="settings-drawer-hero-copy">
             <span className="eyebrow">Global Provider Deck</span>
             <h2>Provider Settings</h2>
+            <p className="muted-text">集中管理全局模型连接、默认模型和自定义 provider 协议映射。</p>
           </div>
-          <button className="ghost-button" type="button" onClick={onClose}>
+          <button className="ghost-button settings-drawer-close" type="button" onClick={onClose}>
             关闭
           </button>
         </div>
 
         <div className="drawer-toolbar">
-          <button className="ghost-button" type="button" onClick={onReset}>
-            回退
-          </button>
-          <button className="ghost-button" type="button" onClick={onAddCustomProvider}>
-            新增 Custom Provider
-          </button>
-          <button className="primary-button" type="button" disabled={savingSettings} onClick={onSaveSettings}>
-            {savingSettings ? "保存中..." : "保存全部设置"}
-          </button>
+          <div className="drawer-toolbar-group">
+            <button className="ghost-button" type="button" onClick={onReset}>
+              回退
+            </button>
+            <button className="ghost-button" type="button" onClick={onAddCustomProvider}>
+              新增 Custom Provider
+            </button>
+          </div>
+          <div className="drawer-toolbar-group is-primary">
+            <p className="muted-text settings-drawer-status">
+              {settingsDirty ? "存在未保存修改" : "当前 provider deck 已同步"}
+            </p>
+            <button className="primary-button" type="button" disabled={savingSettings} onClick={onSaveSettings}>
+              {savingSettings ? "保存中..." : "保存全部设置"}
+            </button>
+          </div>
         </div>
 
-        <div className="summary-chip-row">
+        <div className="settings-summary-grid">
           <article className="summary-chip">
             <span>providers</span>
             <strong>{providerStatusSummary.total}</strong>
@@ -77,60 +85,62 @@ export default function SettingsDrawer({
               "";
             return (
               <article key={provider.name} className="provider-card">
-                <div className="provider-head">
-                  <div>
-                    <span className="eyebrow">{provider.kind}</span>
-                    <h3>{provider.label || provider.name}</h3>
-                    <p className="muted-text">{provider.description || "Provider 连接与模型设置。"}</p>
-                  </div>
-                  <div className="provider-actions">
-                    {provider.editable && (
+                <div className="provider-card-top">
+                  <div className="provider-head">
+                    <div className="provider-head-copy">
+                      <span className="eyebrow">{provider.kind}</span>
+                      <h3>{provider.label || provider.name}</h3>
+                      <p className="muted-text">{provider.description || "Provider 连接与模型设置。"}</p>
+                    </div>
+                    <div className="provider-actions">
+                      {provider.editable && (
+                        <button
+                          className="danger-link"
+                          type="button"
+                          onClick={() => onRemoveCustomProvider(provider.name)}
+                        >
+                          删除
+                        </button>
+                      )}
                       <button
-                        className="danger-link"
+                        className="ghost-button"
                         type="button"
-                        onClick={() => onRemoveCustomProvider(provider.name)}
+                        disabled={testingProvider === provider.name}
+                        onClick={() => onTestProvider(provider)}
                       >
-                        Delete
+                        {testingProvider === provider.name ? "测试中..." : "测试连接"}
                       </button>
-                    )}
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      disabled={testingProvider === provider.name}
-                      onClick={() => onTestProvider(provider)}
-                    >
-                      {testingProvider === provider.name ? "Testing..." : "Test"}
-                    </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="summary-chip-row">
-                  <article
-                    className={classNames(
-                      "summary-chip",
-                      isProviderConfigured(provider) ? "is-success" : "is-danger"
-                    )}
-                  >
-                    <span>status</span>
-                    <strong>{getProviderReadyLabel(provider, probe)}</strong>
-                  </article>
-                  <article className="summary-chip">
-                    <span>family</span>
-                    <strong>{provider.implementation}</strong>
-                  </article>
-                  <article
-                    className={classNames(
-                      "summary-chip",
-                      probe?.ok ? "is-success" : probe ? "is-warning" : ""
-                    )}
-                  >
-                    <span>probe</span>
-                    <strong>{probe ? (probe.ok ? "passed" : "failed") : "untested"}</strong>
-                  </article>
-                  <article className="summary-chip">
-                    <span>default model</span>
-                    <strong>{provider.config.default_model || "-"}</strong>
-                  </article>
+                  <div className="provider-summary-grid">
+                    <article
+                      className={classNames(
+                        "summary-chip",
+                        isProviderConfigured(provider) ? "is-success" : "is-danger"
+                      )}
+                    >
+                      <span>status</span>
+                      <strong>{getProviderReadyLabel(provider, probe)}</strong>
+                    </article>
+                    <article className="summary-chip">
+                      <span>family</span>
+                      <strong>{provider.implementation}</strong>
+                    </article>
+                    <article
+                      className={classNames(
+                        "summary-chip",
+                        probe?.ok ? "is-success" : probe ? "is-warning" : ""
+                      )}
+                    >
+                      <span>probe</span>
+                      <strong>{probe ? (probe.ok ? "passed" : "failed") : "untested"}</strong>
+                    </article>
+                    <article className="summary-chip">
+                      <span>default model</span>
+                      <strong>{provider.config.default_model || "-"}</strong>
+                    </article>
+                  </div>
                 </div>
 
                 <div className="config-grid">
@@ -222,7 +232,7 @@ export default function SettingsDrawer({
                 </div>
 
                 {provider.editable && (
-                  <div className="env-strip">
+                  <div className="env-strip provider-env-strip">
                     <span>{provider.env_keys.base_url_env}</span>
                     <span>{provider.env_keys.api_key_env}</span>
                   </div>
@@ -254,7 +264,7 @@ export default function SettingsDrawer({
                   </div>
                 )}
 
-                <div className="model-strip">
+                <div className="model-strip provider-model-strip">
                   {(provider.models?.generator || []).slice(0, 6).map((model) => (
                     <span
                       key={model.value}
@@ -280,8 +290,6 @@ export default function SettingsDrawer({
             );
           })}
         </div>
-
-        <p className="muted-text">{settingsDirty ? "存在未保存修改" : "当前 provider deck 已同步"}</p>
       </aside>
     </div>
   );

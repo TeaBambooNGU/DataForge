@@ -5,9 +5,9 @@
       "task_name": "report-intent-distill",
       "run_root": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z",
       "created_at": "2026-04-04T05:10:32.215209+00:00",
-      "updated_at": "2026-04-04T05:57:39.506388+00:00",
-      "status": "review_validated",
-      "last_stage": "validate_review",
+      "updated_at": "2026-04-07T16:02:30.692692+00:00",
+      "status": "gold_built",
+      "last_stage": "build_gold",
       "stages": {
         "generate": {
           "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/generate.json",
@@ -64,6 +64,15 @@
             "completion_rate": 0.0,
             "acceptance_rate": 0.0,
             "reviewed_by": {}
+          },
+          "summary": {}
+        },
+        "build_gold": {
+          "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/build_gold.json",
+          "completed_at": "2026-04-07T16:02:30.692176+00:00",
+          "stats": {
+            "gold_samples": 9,
+            "hard_cases": 9
           },
           "summary": {}
         }
