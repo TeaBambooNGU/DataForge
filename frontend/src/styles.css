@@ -111,6 +111,11 @@ textarea:focus-visible {
   padding: 8px 0 28px;
 }
 
+.topbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -355,6 +360,9 @@ textarea:focus-visible {
 
 .hero-metrics div,
 .status-block {
+  display: grid;
+  gap: 6px;
+  align-content: start;
   padding: 16px 18px;
   border-radius: 22px;
   background: rgba(255, 247, 237, 0.06);
@@ -886,6 +894,7 @@ textarea:focus-visible {
   border-radius: 14px;
   background: rgba(255, 247, 237, 0.05);
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .compact-list span {
@@ -1364,6 +1373,19 @@ textarea:focus-visible {
     max-width: 100%;
   }
 
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .topbar-actions .message-pill {
+    flex: 1 1 240px;
+  }
+
+  .topbar-actions .gear-button {
+    flex: 0 0 auto;
+  }
+
   .hero-copy h1,
   .workspace-title h1 {
     font-size: 2.6rem;
@@ -1385,6 +1407,10 @@ textarea:focus-visible {
   .artifact-toolbar .search-input,
   .filter-select {
     width: 100%;
+  }
+
+  .timeline {
+    grid-template-columns: 1fr;
   }
 
   .artifact-table {
