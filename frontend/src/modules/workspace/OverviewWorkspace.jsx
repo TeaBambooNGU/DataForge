@@ -88,24 +88,51 @@ export default function OverviewWorkspace({
         <div className="command-grid">
           {STAGE_ACTIONS.map((action) => {
             const stageKey = action.command.replaceAll("-", "_");
+            const isComplete = selectedRunCompletedStages.has(stageKey);
+            const isLocked = action.requiresRun && !selectedRun?.run_id;
+            const isRecommended = nextRecommendedCommand === action.command;
             const disabled =
               busyCommand === action.command ||
-              (action.requiresRun && !selectedRun?.run_id) ||
-              selectedRunCompletedStages.has(stageKey);
+              isLocked ||
+              isComplete;
+            const statusLabel =
+              busyCommand === action.command
+                ? "执行中"
+                : isComplete
+                  ? "已完成"
+                  : isRecommended
+                    ? "推荐推进"
+                    : isLocked
+                      ? "需先创建 Run"
+                      : action.command === "generate" && !selectedRun?.run_id
+                        ? "起点"
+                        : "可执行";
             return (
               <button
                 key={action.command}
-                className={classNames("command-card", disabled && "is-disabled")}
+                className={classNames(
+                  "command-card",
+                  disabled && "is-disabled",
+                  isComplete && "is-complete",
+                  isLocked && "is-locked",
+                  isRecommended && "is-recommended"
+                )}
                 type="button"
                 disabled={disabled}
                 onClick={() => onRunCommand(action.command)}
               >
-                <span>{action.eyebrow}</span>
+                <div className="command-card-top">
+                  <span>{action.eyebrow}</span>
+                  <em className="command-card-state">{statusLabel}</em>
+                </div>
                 <strong>{action.label}</strong>
                 <p>{action.description}</p>
                 <small className="field-hint">
                   {PIPELINE_STAGE_META[action.command]?.actionHint || "推进这一阶段并观察产物反馈。"}
                 </small>
+                <span className="command-card-arrow" aria-hidden="true">
+                  {isComplete ? "Done" : isLocked ? "Locked" : "Continue"}
+                </span>
               </button>
             );
           })}

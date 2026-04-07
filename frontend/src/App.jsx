@@ -877,25 +877,29 @@ function App() {
       <div className="app-backdrop" />
 
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">DF</span>
-          <div>
-            <p>Task-first Local Forge</p>
-            <strong>DataForge</strong>
+        <div className="topbar-panel">
+          <div className="brand">
+            <span className="brand-mark">DF</span>
+            <div>
+              <p>Calm Pipeline Studio</p>
+              <strong>DataForge</strong>
+            </div>
           </div>
-        </div>
 
-        <div className="topbar-actions">
-          <div className={classNames("message-pill", messageTone && `is-${messageTone}`)}>{message}</div>
-          <button
-            className="gear-button"
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="打开 Provider 设置"
-          >
-            <span className="gear-dot" />
-            <span className="gear-icon">⚙</span>
-          </button>
+          <div className="topbar-actions">
+            <div className={classNames("message-pill", messageTone && `is-${messageTone}`)}>
+              {message}
+            </div>
+            <button
+              className="gear-button"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="打开 Provider 设置"
+            >
+              <span className="gear-dot" />
+              <span className="gear-icon">⚙</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -913,9 +917,12 @@ function App() {
         <main className="workspace-screen">
           <section className="workspace-hero">
             <div className="workspace-title">
-              <button className="ghost-button" type="button" onClick={() => setScreen("home")}>
-                返回 Task 首屏
-              </button>
+              <div className="workspace-title-actions">
+                <button className="ghost-button" type="button" onClick={() => setScreen("home")}>
+                  返回 Task 首屏
+                </button>
+                <span className="micro-chip subdued">{`${runs.length} Runs`}</span>
+              </div>
               <span className="eyebrow">Run Cockpit</span>
               <h1>{activeTask?.name || "Task"}</h1>
               <p>{currentTaskSummary}</p>
@@ -944,10 +951,11 @@ function App() {
                   <span className="eyebrow">Run Reel</span>
                   <h2>Runs</h2>
                 </div>
+                <span className="micro-chip subdued">{runs.length}</span>
               </div>
 
               <button className="rail-cta" type="button" onClick={() => handleRunCommand("generate")}>
-                Forge New Run
+                新建 Run
               </button>
 
               <div className="run-list">
@@ -984,19 +992,21 @@ function App() {
             </aside>
 
             <section className="cockpit">
-              <nav className="workspace-tabs" aria-label="workspace tabs">
-                {WORKSPACE_TABS.map((tab) => (
-                  <button
-                    key={tab.key}
-                    className={classNames("workspace-tab", workspaceTab === tab.key && "is-active")}
-                    type="button"
-                    aria-pressed={workspaceTab === tab.key}
-                    onClick={() => setWorkspaceTab(tab.key)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </nav>
+              <div className="workspace-tabs-shell">
+                <nav className="workspace-tabs" aria-label="workspace tabs">
+                  {WORKSPACE_TABS.map((tab) => (
+                    <button
+                      key={tab.key}
+                      className={classNames("workspace-tab", workspaceTab === tab.key && "is-active")}
+                      type="button"
+                      aria-pressed={workspaceTab === tab.key}
+                      onClick={() => setWorkspaceTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+              </div>
 
               {workspaceTab === "overview" && (
                 <OverviewWorkspace

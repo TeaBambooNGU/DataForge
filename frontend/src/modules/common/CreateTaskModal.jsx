@@ -70,9 +70,14 @@ export default function CreateTaskModal({
               }
             />
           </label>
-          <button className="primary-button" type="submit">
-            创建并进入
-          </button>
+          <div className="modal-actions">
+            <button className="ghost-button" type="button" onClick={onClose}>
+              取消
+            </button>
+            <button className="primary-button" type="submit">
+              创建并进入
+            </button>
+          </div>
         </form>
       </div>
     </div>
