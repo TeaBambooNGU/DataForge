@@ -1,7 +1,7 @@
 import React from "react";
 
 import { PIPELINE_STAGE_META, STAGE_ACTIONS } from "../../constants/app.js";
-import { classNames, formatDate, formatMetricValue } from "../../lib/utils.js";
+import { classNames, formatDate } from "../../lib/utils.js";
 
 function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecommendedCommand) {
   const orderedActions = STAGE_ACTIONS.filter((action) => action.command !== "run-all");
@@ -26,7 +26,6 @@ function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecomm
       stagePayload,
       completedAt:
         stagePayload?.completed_at || (action.command === "generate" ? selectedRun?.created_at : null),
-      stats: summarizeStageStats(stagePayload?.stats),
       status,
       summary:
         status === "done"
@@ -40,15 +39,6 @@ function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecomm
   });
 }
 
-function summarizeStageStats(stats) {
-  if (!stats || typeof stats !== "object" || !Object.keys(stats).length) {
-    return ["无结构化统计，建议直接查看该阶段推荐 artifact。"];
-  }
-  return Object.entries(stats).map(
-    ([label, value]) => `${label}: ${formatMetricValue(label, value)}`
-  );
-}
-
 export default function OverviewWorkspace({
   selectedRun,
   nextRecommendedCommand,
@@ -60,6 +50,9 @@ export default function OverviewWorkspace({
     selectedRun,
     selectedRunCompletedStages,
     nextRecommendedCommand
+  );
+  const checklistByCommand = Object.fromEntries(
+    checklistItems.map((item) => [item.command, item])
   );
   return (
     <div className="panel-grid">
@@ -93,8 +86,10 @@ export default function OverviewWorkspace({
         ) : null}
         <div className="command-grid">
           {STAGE_ACTIONS.map((action) => {
+            const checklistItem = checklistByCommand[action.command];
             const stageKey = action.command.replaceAll("-", "_");
             const isComplete = selectedRunCompletedStages.has(stageKey);
+            const isStageDone = checklistItem?.status === "done";
             const isLocked = action.requiresRun && !selectedRun?.run_id;
             const isRecommended = nextRecommendedCommand === action.command;
             const disabled =
@@ -136,51 +131,21 @@ export default function OverviewWorkspace({
                 <small className="field-hint">
                   {PIPELINE_STAGE_META[action.command]?.actionHint || "推进这一阶段并观察产物反馈。"}
                 </small>
+                <div className="command-card-detail">
+                  <div className="command-card-meta-row">
+                    <span>完成时间</span>
+                    <strong>{isStageDone ? formatDate(checklistItem?.completedAt) : "-"}</strong>
+                  </div>
+                  <span className="field-hint command-card-summary">
+                    {checklistItem?.summary || "推进这一阶段并观察产物反馈。"}
+                  </span>
+                </div>
                 <span className="command-card-arrow" aria-hidden="true">
                   {isComplete ? "Done" : isLocked ? "Locked" : "Continue"}
                 </span>
               </button>
             );
           })}
-        </div>
-      </section>
-
-      <section className="panel panel-wide">
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">Run Signal</span>
-            <h2>当前状态</h2>
-          </div>
-        </div>
-        <div className="run-checklist">
-          {checklistItems.map((item) => (
-            <article
-              key={item.command}
-              className={classNames("checklist-item", `is-${item.status}`)}
-            >
-              <div className="artifact-record-head">
-                <div>
-                  <strong>{item.label}</strong>
-                  <p>{PIPELINE_STAGE_META[item.command]?.description || item.description}</p>
-                </div>
-                <span className="micro-chip">{item.status}</span>
-              </div>
-              <span className="field-hint">{item.summary}</span>
-              {item.status === "done" ? (
-                <div className="checklist-detail">
-                  <div className="checklist-detail-meta">
-                    <span>完成时间</span>
-                    <strong>{formatDate(item.completedAt)}</strong>
-                  </div>
-                  <div className="config-bullet-list compact-list checklist-detail-stats">
-                    {item.stats.map((statItem) => (
-                      <span key={`${item.stageKey}-${statItem}`}>{statItem}</span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </article>
-          ))}
         </div>
         <div className="stat-stack">
           <div className="stat-row">

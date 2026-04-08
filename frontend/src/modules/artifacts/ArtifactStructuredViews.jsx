@@ -132,6 +132,44 @@ function RawCandidatesStructured({ records, rawCandidateViewMode, rawCandidateGr
     );
   }
 
+  const renderRawCandidateRow = (record, compact = false) => {
+    const metaItems = [
+      ["difficulty", record.metadata?.difficulty || "-"],
+      ["report", record.context?.has_visible_report ? "true" : "false"],
+      ["stage", record.context?.dialogue_stage || "-"],
+      ["tags", formatMetricValue("tags", record.metadata?.tags || [])],
+    ];
+
+    return (
+      <article key={record.id} className={classNames("raw-candidate-row", compact && "is-compact")}>
+        <div className="raw-candidate-row-main">
+          <div className="raw-candidate-side">
+            <div className="raw-candidate-cell raw-candidate-cell-id">
+              <span className="raw-candidate-cell-label">ID</span>
+              <code>{record.id || "-"}</code>
+            </div>
+            <div className="raw-candidate-cell raw-candidate-cell-hint">
+              <span className="raw-candidate-cell-label">label_hint</span>
+              <strong>{record.metadata?.label_hint || "-"}</strong>
+            </div>
+          </div>
+          <div className="raw-candidate-cell raw-candidate-cell-text">
+            <span className="raw-candidate-cell-label">User Text</span>
+            <p>{getRawCandidateUserText(record)}</p>
+          </div>
+        </div>
+        <div className="raw-candidate-row-meta">
+          {metaItems.map(([label, value]) => (
+            <span key={`${record.id}-${label}`} className="raw-candidate-meta-item">
+              <strong>{label}</strong>
+              {value}
+            </span>
+          ))}
+        </div>
+      </article>
+    );
+  };
+
   if (rawCandidateViewMode === "category") {
     const grouped = new Map();
     records.forEach((record) => {
@@ -160,32 +198,7 @@ function RawCandidatesStructured({ records, rawCandidateViewMode, rawCandidateGr
                 <h3>{group}</h3>
                 <span className="micro-chip">{items.length} 条</span>
               </div>
-              <div className="artifact-table-wrap">
-                <table className="artifact-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>User Text</th>
-                      <th>difficulty</th>
-                      <th>has_report</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((record) => (
-                      <tr key={record.id}>
-                        <td>
-                          <code>{record.id || "-"}</code>
-                        </td>
-                        <td>
-                          <code>{getRawCandidateUserText(record)}</code>
-                        </td>
-                        <td>{record.metadata?.difficulty || "-"}</td>
-                        <td>{record.context?.has_visible_report ? "true" : "false"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <div className="raw-candidate-list is-compact">{items.map((record) => renderRawCandidateRow(record, true))}</div>
             </article>
           ))}
         </div>
@@ -195,38 +208,7 @@ function RawCandidatesStructured({ records, rawCandidateViewMode, rawCandidateGr
 
   return (
     <div className="artifact-diagnostic-panel">
-      <div className="artifact-table-wrap">
-        <table className="artifact-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>User Text</th>
-              <th>label_hint</th>
-              <th>difficulty</th>
-              <th>has_report</th>
-              <th>dialogue_stage</th>
-              <th>tags</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((record) => (
-              <tr key={record.id}>
-                <td>
-                  <code>{record.id || "-"}</code>
-                </td>
-                <td>
-                  <code>{getRawCandidateUserText(record)}</code>
-                </td>
-                <td>{record.metadata?.label_hint || "-"}</td>
-                <td>{record.metadata?.difficulty || "-"}</td>
-                <td>{record.context?.has_visible_report ? "true" : "false"}</td>
-                <td>{record.context?.dialogue_stage || "-"}</td>
-                <td>{formatMetricValue("tags", record.metadata?.tags || [])}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <div className="raw-candidate-list">{records.map((record) => renderRawCandidateRow(record))}</div>
     </div>
   );
 }
@@ -562,7 +544,8 @@ function GenericObjectStructured({ object, title }) {
 export function ArtifactStructuredContent({
   artifactPayload,
   artifactViewMode,
-  filteredArtifactRows,
+  visibleArtifactRows,
+  paginatedRawArtifactContent,
   rawCandidateViewMode,
   rawCandidateGroupBy,
 }) {
@@ -577,9 +560,7 @@ export function ArtifactStructuredContent({
   if (artifactViewMode === "raw") {
     return (
       <pre className="code-block">
-        {typeof artifactPayload.content === "string"
-          ? artifactPayload.content || "暂无内容"
-          : JSON.stringify(artifactPayload.content, null, 2)}
+        {paginatedRawArtifactContent}
       </pre>
     );
   }
@@ -588,19 +569,19 @@ export function ArtifactStructuredContent({
     if (artifactPayload.key === "raw_candidates") {
       return (
         <RawCandidatesStructured
-          records={filteredArtifactRows}
+          records={visibleArtifactRows}
           rawCandidateViewMode={rawCandidateViewMode}
           rawCandidateGroupBy={rawCandidateGroupBy}
         />
       );
     }
     if (artifactPayload.key === "rejected_samples") {
-      return <RejectedSamplesStructured records={filteredArtifactRows} />;
+      return <RejectedSamplesStructured records={visibleArtifactRows} />;
     }
     if (artifactPayload.key === "eval_predictions") {
-      return <EvalPredictionsStructured records={filteredArtifactRows} />;
+      return <EvalPredictionsStructured records={visibleArtifactRows} />;
     }
-    if (!filteredArtifactRows.length) {
+    if (!visibleArtifactRows.length) {
       return (
         <div className="empty-board compact">
           <strong>没有匹配当前搜索或筛选条件的记录</strong>
@@ -609,7 +590,7 @@ export function ArtifactStructuredContent({
     }
     return (
       <div className="artifact-card-grid">
-        {filteredArtifactRows.map((record, index) => (
+        {visibleArtifactRows.map((record, index) => (
           <ArtifactRecordCard
             key={record.id || record.sample_id || `${artifactPayload.key}-${index}`}
             record={record}

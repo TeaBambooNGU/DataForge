@@ -48,6 +48,9 @@ import ReviewWorkspace from "./modules/review/ReviewWorkspace.jsx";
 import SettingsDrawer from "./modules/settings/SettingsDrawer.jsx";
 import OverviewWorkspace from "./modules/workspace/OverviewWorkspace.jsx";
 
+const STRUCTURED_ARTIFACT_PAGE_SIZE = 24;
+const RAW_ARTIFACT_LINE_PAGE_SIZE = 120;
+
 function App() {
   const [tasks, setTasks] = useState([]);
   const [screen, setScreen] = useState("home");
@@ -69,6 +72,7 @@ function App() {
   const [artifactSearch, setArtifactSearch] = useState("");
   const [artifactFilter, setArtifactFilter] = useState("all");
   const [artifactViewMode, setArtifactViewMode] = useState("structured");
+  const [artifactPage, setArtifactPage] = useState(1);
   const [rawCandidateViewMode, setRawCandidateViewMode] = useState("table");
   const [rawCandidateGroupBy, setRawCandidateGroupBy] = useState("label_hint");
   const [reviewPayload, setReviewPayload] = useState({
@@ -138,6 +142,99 @@ function App() {
     () => buildArtifactSummary(artifactPayload, filteredArtifactRows),
     [artifactPayload, filteredArtifactRows]
   );
+  const rawArtifactText = useMemo(() => {
+    if (!artifactPayload || artifactViewMode !== "raw") {
+      return "";
+    }
+    if (typeof artifactPayload.content === "string") {
+      return artifactPayload.content || "暂无内容";
+    }
+    return JSON.stringify(artifactPayload.content, null, 2) || "暂无内容";
+  }, [artifactPayload, artifactViewMode]);
+  const artifactPagination = useMemo(() => {
+    if (!artifactPayload) {
+      return {
+        page: 1,
+        pageCount: 1,
+        totalItems: 0,
+        startItem: 0,
+        endItem: 0,
+        pageSize: 0,
+        unitLabel: "项",
+      };
+    }
+
+    let totalItems = 0;
+    let pageSize = 0;
+    let unitLabel = "项";
+
+    if (artifactViewMode === "structured" && artifactPayload.kind === "jsonl") {
+      totalItems = filteredArtifactRows.length;
+      pageSize = STRUCTURED_ARTIFACT_PAGE_SIZE;
+      unitLabel = "条记录";
+    } else if (artifactViewMode === "raw") {
+      totalItems = rawArtifactText.split("\n").length;
+      pageSize = RAW_ARTIFACT_LINE_PAGE_SIZE;
+      unitLabel = "行";
+    }
+
+    if (!pageSize || totalItems <= 0) {
+      return {
+        page: 1,
+        pageCount: 1,
+        totalItems,
+        startItem: totalItems ? 1 : 0,
+        endItem: totalItems,
+        pageSize,
+        unitLabel,
+      };
+    }
+
+    const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
+    const page = Math.min(artifactPage, pageCount);
+    const startItem = (page - 1) * pageSize + 1;
+    const endItem = Math.min(totalItems, startItem + pageSize - 1);
+
+    return {
+      page,
+      pageCount,
+      totalItems,
+      startItem,
+      endItem,
+      pageSize,
+      unitLabel,
+    };
+  }, [artifactPage, artifactPayload, artifactViewMode, filteredArtifactRows, rawArtifactText]);
+  const visibleArtifactRows = useMemo(() => {
+    if (artifactViewMode !== "structured" || artifactPayload?.kind !== "jsonl") {
+      return filteredArtifactRows;
+    }
+    const startIndex = (artifactPagination.page - 1) * artifactPagination.pageSize;
+    return filteredArtifactRows.slice(startIndex, startIndex + artifactPagination.pageSize);
+  }, [
+    artifactPagination.page,
+    artifactPagination.pageSize,
+    artifactPayload?.kind,
+    artifactViewMode,
+    filteredArtifactRows,
+  ]);
+  const paginatedRawArtifactContent = useMemo(() => {
+    if (artifactViewMode !== "raw") {
+      return rawArtifactText;
+    }
+    if (artifactPagination.pageCount <= 1) {
+      return rawArtifactText;
+    }
+    const lines = rawArtifactText.split("\n");
+    const startIndex = (artifactPagination.page - 1) * artifactPagination.pageSize;
+    return lines.slice(startIndex, startIndex + artifactPagination.pageSize).join("\n");
+  }, [
+    artifactPagination.page,
+    artifactPagination.pageCount,
+    artifactPagination.pageSize,
+    artifactViewMode,
+    rawArtifactText,
+  ]);
 
   const visibleRunArtifacts = useMemo(() => visibleArtifacts(selectedRun), [selectedRun]);
   const artifactNavCategoryOptions = useMemo(() => {
@@ -295,6 +392,7 @@ function App() {
       setArtifactPayload(null);
       setArtifactSearch("");
       setArtifactFilter("all");
+      setArtifactPage(1);
       setArtifactNavSearch("");
       setArtifactNavCategoryFilter("all");
       return;
@@ -304,6 +402,7 @@ function App() {
     setArtifactPayload(null);
     setArtifactSearch("");
     setArtifactFilter("all");
+    setArtifactPage(1);
     setArtifactNavSearch("");
     setArtifactNavCategoryFilter("all");
     setArtifactKey((current) => {
@@ -361,6 +460,24 @@ function App() {
   }, [artifactFilter, artifactFilterOptions]);
 
   useEffect(() => {
+    setArtifactPage(1);
+  }, [
+    artifactKey,
+    artifactSearch,
+    artifactFilter,
+    artifactViewMode,
+    rawCandidateViewMode,
+    rawCandidateGroupBy,
+    artifactPayload?.relative_path,
+  ]);
+
+  useEffect(() => {
+    if (artifactPage !== artifactPagination.page) {
+      setArtifactPage(artifactPagination.page);
+    }
+  }, [artifactPage, artifactPagination.page]);
+
+  useEffect(() => {
     if (!artifactNavCategoryOptions.some((item) => item.value === artifactNavCategoryFilter)) {
       setArtifactNavCategoryFilter("all");
     }
@@ -382,6 +499,7 @@ function App() {
         });
         setArtifactSearch("");
         setArtifactFilter("all");
+        setArtifactPage(1);
       })
       .catch((error) => {
         if (!cancelled) {
@@ -1044,7 +1162,10 @@ function App() {
                   setRawCandidateViewMode={setRawCandidateViewMode}
                   rawCandidateGroupBy={rawCandidateGroupBy}
                   setRawCandidateGroupBy={setRawCandidateGroupBy}
-                  filteredArtifactRows={filteredArtifactRows}
+                  visibleArtifactRows={visibleArtifactRows}
+                  paginatedRawArtifactContent={paginatedRawArtifactContent}
+                  artifactPagination={artifactPagination}
+                  setArtifactPage={setArtifactPage}
                 />
               )}
 

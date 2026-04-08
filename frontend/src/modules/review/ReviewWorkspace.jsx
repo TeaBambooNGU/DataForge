@@ -130,24 +130,24 @@ export default function ReviewWorkspace({
 
                       <label>
                         <span>Reviewer Label</span>
-                        <input
-                          type="text"
+                        <select
                           value={record.reviewer_label || ""}
-                          list={`labels-${index}`}
                           onChange={(event) =>
                             onUpdateRecord(index, (current) => ({
                               ...current,
                               reviewer_label: event.target.value,
                             }))
                           }
-                        />
-                        <datalist id={`labels-${index}`}>
-                          {reviewPayload.labels.map((label) => (
-                            <option key={label} value={label} />
+                        >
+                          <option value="">选择标签</option>
+                          {(reviewPayload.labels || []).map((label) => (
+                            <option key={label} value={label}>
+                              {label}
+                            </option>
                           ))}
-                        </datalist>
+                        </select>
                         <small className="field-hint">
-                          accepted 会自动沿用 teacher_label；corrected 时这里必填。
+                          这里只能选择 task labels；accepted 会自动沿用 teacher_label，corrected 时这里必填。
                         </small>
                       </label>
 

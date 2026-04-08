@@ -692,6 +692,11 @@ textarea:focus-visible {
   align-items: start;
 }
 
+.command-card-detail {
+  display: grid;
+  gap: 10px;
+}
+
 .command-card span,
 .record-row span,
 .review-card header span {
@@ -713,6 +718,28 @@ textarea:focus-visible {
   font-size: 0.72rem;
   font-style: normal;
   font-weight: 700;
+}
+
+.command-card-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.command-card-meta-row span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.command-card-meta-row strong {
+  font-size: 0.92rem;
+}
+
+.command-card-summary {
+  margin-top: 0;
 }
 
 .command-card-arrow {
@@ -791,6 +818,13 @@ textarea:focus-visible {
 
 .artifact-layout {
   grid-template-columns: 336px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.artifact-layout > .panel {
+  height: clamp(560px, calc(100vh - 240px), 920px);
+  min-height: clamp(560px, calc(100vh - 240px), 920px);
+  overflow: hidden;
 }
 
 .artifact-layout .panel-wide {
@@ -812,6 +846,8 @@ textarea:focus-visible {
 .artifact-sidebar-frame {
   display: grid;
   gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   min-width: 0;
   padding: 18px;
   border-radius: 28px;
@@ -822,6 +858,17 @@ textarea:focus-visible {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.88),
     0 18px 40px rgba(120, 149, 191, 0.12);
+  overflow: hidden;
+}
+
+.artifact-sidebar-body {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  align-content: start;
 }
 
 .artifact-chip {
@@ -1064,6 +1111,7 @@ textarea:focus-visible {
 .artifact-nav-group,
 .artifact-nav-group-list,
 .artifact-preview,
+.artifact-preview-body,
 .artifact-object-stack,
 .artifact-diagnostic-panel,
 .artifact-card-grid,
@@ -1078,6 +1126,21 @@ textarea:focus-visible {
 
 .artifact-nav-tools {
   align-items: stretch;
+}
+
+.artifact-preview {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.artifact-preview-body {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  align-content: start;
 }
 
 .artifact-nav-head,
@@ -1476,6 +1539,127 @@ textarea:focus-visible {
   background: rgba(95, 207, 139, 0.05);
 }
 
+.raw-candidate-list {
+  display: grid;
+  gap: 14px;
+}
+
+.raw-candidate-list.is-compact {
+  gap: 12px;
+}
+
+.raw-candidate-row {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(246, 250, 255, 0.68));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+}
+
+.raw-candidate-row.is-compact {
+  padding: 16px;
+  gap: 10px;
+}
+
+.raw-candidate-row-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.raw-candidate-side {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.raw-candidate-cell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.raw-candidate-cell-label {
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.raw-candidate-cell-id code,
+.raw-candidate-cell-hint strong {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.raw-candidate-cell-id code {
+  color: var(--paper);
+  font-size: 0.96rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-candidate-cell-hint strong {
+  color: var(--paper);
+  font-family: Sora, sans-serif;
+  font-size: 1rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.raw-candidate-cell-text p {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--paper);
+  font-size: 1.08rem;
+  line-height: 1.8;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-candidate-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.raw-candidate-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.raw-candidate-meta-item strong {
+  color: var(--paper);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .artifact-confusion-grid,
 .review-decision-guide {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1571,6 +1755,30 @@ textarea:focus-visible {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--paper);
+}
+
+.artifact-pagination,
+.artifact-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.artifact-pagination {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid rgba(140, 158, 190, 0.18);
+}
+
+.artifact-pagination-summary {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.artifact-pagination-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .review-guide-card {
@@ -1909,6 +2117,11 @@ textarea:focus-visible {
     grid-column: auto;
   }
 
+  .artifact-layout > .panel {
+    height: auto;
+    min-height: 220px;
+  }
+
   .run-rail {
     position: static;
   }
@@ -2029,12 +2242,27 @@ textarea:focus-visible {
     margin-left: 0;
   }
 
+  .artifact-sidebar-body,
+  .artifact-preview-body {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .artifact-pagination-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .timeline {
     grid-template-columns: 1fr;
   }
 
   .artifact-table {
     min-width: 560px;
+  }
+
+  .raw-candidate-row-main {
+    grid-template-columns: 1fr;
   }
 
   .runtime-custom-row {
