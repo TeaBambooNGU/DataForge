@@ -559,9 +559,11 @@ export function ArtifactStructuredContent({
 
   if (artifactViewMode === "raw") {
     return (
-      <pre className="code-block">
-        {paginatedRawArtifactContent}
-      </pre>
+      <div className="raw-artifact-view">
+        <pre className="code-block raw-artifact-code">
+          {paginatedRawArtifactContent}
+        </pre>
+      </div>
     );
   }
 

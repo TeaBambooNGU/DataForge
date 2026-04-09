@@ -930,6 +930,16 @@ textarea:focus-visible {
   word-break: break-word;
 }
 
+.raw-artifact-view {
+  display: grid;
+  min-height: clamp(360px, 52vh, 760px);
+}
+
+.raw-artifact-code {
+  min-height: 100%;
+  max-height: none;
+}
+
 .record-stack,
 .review-stack,
 .provider-stack,
