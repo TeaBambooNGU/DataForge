@@ -356,6 +356,22 @@ textarea:focus-visible {
   align-items: stretch;
 }
 
+.home-hero-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.home-hero-panel::before,
+.workspace-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top right, rgba(106, 168, 255, 0.18), transparent 32%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.16), transparent 55%);
+}
+
 .home-screen,
 .workspace-screen {
   display: grid;
@@ -366,6 +382,7 @@ textarea:focus-visible {
 .hero-aside,
 .workspace-title,
 .workspace-status,
+.workspace-focus-card,
 .artifact-preview,
 .review-stack,
 .editor-stack,
@@ -380,6 +397,7 @@ textarea:focus-visible {
 .hero-aside,
 .workspace-title,
 .workspace-status,
+.workspace-focus-card,
 .task-card,
 .run-card,
 .panel,
@@ -418,13 +436,29 @@ textarea:focus-visible {
 .config-grid,
 .review-grid,
 .drawer-toolbar,
-.hero-aside {
+.hero-aside,
+.hero-actions,
+.workspace-focus-actions {
   display: grid;
   gap: 16px;
 }
 
 .hero-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.workspace-status {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.hero-actions,
+.workspace-focus-actions {
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  align-items: start;
+}
+
+.hero-primary-action {
+  min-width: 180px;
 }
 
 .hero-metrics div,
@@ -455,7 +489,10 @@ textarea:focus-visible {
 }
 
 .signal-card,
-.create-tile {
+.create-tile,
+.home-spotlight,
+.workspace-focus-card,
+.run-rail-shell {
   padding: 24px;
 }
 
@@ -473,6 +510,24 @@ textarea:focus-visible {
     linear-gradient(160deg, rgba(106, 168, 255, 0.16), rgba(142, 224, 198, 0.14)),
     rgba(255, 255, 255, 0.74);
   color: inherit;
+}
+
+.home-spotlight,
+.workspace-focus-card,
+.run-rail-shell {
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 251, 255, 0.66)),
+    rgba(255, 255, 255, 0.64);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 18px 38px rgba(120, 149, 191, 0.12);
+}
+
+.home-spotlight {
+  display: grid;
+  gap: 14px;
 }
 
 .section-head h2,
@@ -502,6 +557,13 @@ textarea:focus-visible {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.task-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .task-card.tilt-left,
@@ -550,6 +612,14 @@ textarea:focus-visible {
   word-break: break-word;
 }
 
+.task-card-entry,
+.run-rail-copy {
+  color: var(--accent-strong);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .danger-link,
 .ghost-button,
 .primary-button {
@@ -591,9 +661,60 @@ textarea:focus-visible {
   align-items: start;
 }
 
+.workspace-hero {
+  position: relative;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  padding: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 32px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(246, 250, 255, 0.64)),
+    rgba(255, 255, 255, 0.62);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.workspace-title,
+.workspace-focus-card {
+  position: relative;
+  z-index: 1;
+}
+
+.workspace-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.workspace-focus-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-focus-title {
+  font-family: "Sora", sans-serif;
+  font-size: clamp(1.3rem, 2vw, 1.8rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.workspace-focus-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .run-rail {
   position: sticky;
   top: 92px;
+}
+
+.run-rail-shell {
+  display: grid;
+  gap: 18px;
 }
 
 .rail-cta {
@@ -760,6 +881,7 @@ textarea:focus-visible {
   background:
     linear-gradient(180deg, rgba(106, 168, 255, 0.14), rgba(255, 255, 255, 0.7));
   box-shadow: 0 18px 38px rgba(106, 168, 255, 0.18);
+  grid-column: span 2;
 }
 
 .command-card.is-complete {
@@ -1151,6 +1273,18 @@ textarea:focus-visible {
   padding-right: 6px;
   scrollbar-gutter: stable;
   align-content: start;
+}
+
+.pipeline-panel,
+.artifact-explainer-card {
+  display: grid;
+  gap: 18px;
+}
+
+.pipeline-summary-row,
+.artifact-summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
 .artifact-nav-head,
@@ -1670,6 +1804,47 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+.next-step-banner.is-calm {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(246, 250, 255, 0.7)),
+    rgba(255, 255, 255, 0.58);
+}
+
+.home-screen > *,
+.workspace-screen > *,
+.task-card,
+.run-card,
+.command-card,
+.artifact-item {
+  animation: panel-enter 520ms cubic-bezier(0.2, 1, 0.2, 1) both;
+}
+
+.task-card:nth-child(2),
+.run-card:nth-child(2),
+.command-card:nth-child(2),
+.artifact-item:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.task-card:nth-child(3),
+.run-card:nth-child(3),
+.command-card:nth-child(3),
+.artifact-item:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .artifact-confusion-grid,
 .review-decision-guide {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2135,6 +2310,22 @@ textarea:focus-visible {
   .run-rail {
     position: static;
   }
+
+  .run-rail {
+    order: 2;
+  }
+
+  .cockpit {
+    order: 1;
+  }
+
+  .workspace-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .command-card.is-recommended {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2199,6 +2390,14 @@ textarea:focus-visible {
     width: 100%;
   }
 
+  .workspace-title-actions,
+  .workspace-chip-row,
+  .workspace-focus-head {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
   .modal-actions {
     justify-content: stretch;
   }
@@ -2227,11 +2426,38 @@ textarea:focus-visible {
 
   .hero-copy h1,
   .workspace-title h1 {
-    font-size: 2.6rem;
+    font-size: 2.2rem;
   }
 
   .hero-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .hero-actions,
+  .workspace-focus-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-primary-action {
+    width: 100%;
+  }
+
+  .workspace-hero {
+    padding: 18px;
+  }
+
+  .workspace-status {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-title,
+  .workspace-focus-card,
+  .run-rail-shell {
+    padding: 18px;
+  }
+
+  .workspace-focus-card {
+    gap: 12px;
   }
 
   .search-input.short {
@@ -2256,6 +2482,14 @@ textarea:focus-visible {
   .artifact-preview-body {
     overflow: visible;
     padding-right: 0;
+  }
+
+  .artifact-sidebar {
+    order: 2;
+  }
+
+  .artifact-layout .panel-wide {
+    order: 1;
   }
 
   .artifact-pagination-actions {

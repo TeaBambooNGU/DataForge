@@ -7,7 +7,7 @@ import React, {
   useState,
 } from "react";
 
-import { DEFAULT_CREATE_TASK, WORKSPACE_TABS } from "./constants/app.js";
+import { DEFAULT_CREATE_TASK, STAGE_ACTIONS, WORKSPACE_TABS } from "./constants/app.js";
 import { api } from "./lib/api.js";
 import {
   buildArtifactSummary,
@@ -986,9 +986,26 @@ function App() {
 
   const currentTaskSummary = activeTask ? summarizeTask(activeTask) : "选择 task 进入 run";
   const currentRunSummary = selectedRun
-    ? `${selectedRun.status || "draft"} / ${Object.keys(selectedRun.stages || {}).length} stages`
+    ? `${selectedRun.status || "draft"} / 已完成 ${Object.keys(selectedRun.stages || {}).length} 个阶段`
     : "尚未选择 run";
   const nextRecommendedCommand = getNextRecommendedCommand(selectedRun);
+  const nextRecommendedAction = STAGE_ACTIONS.find(
+    (action) => action.command === nextRecommendedCommand
+  );
+  const workspacePrimaryAction = !selectedRun?.run_id
+    ? {
+        label: "创建首个 Run",
+        onClick: () => handleRunCommand("generate"),
+      }
+    : nextRecommendedAction
+      ? {
+          label: `执行 ${nextRecommendedAction.label}`,
+          onClick: () => handleRunCommand(nextRecommendedAction.command),
+        }
+      : {
+          label: "查看当前产物",
+          onClick: () => setWorkspaceTab("artifacts"),
+        };
 
   return (
     <div className="app-shell">
@@ -1037,75 +1054,126 @@ function App() {
             <div className="workspace-title">
               <div className="workspace-title-actions">
                 <button className="ghost-button" type="button" onClick={() => setScreen("home")}>
-                  返回 Task 首屏
+                  返回 Task 列表
                 </button>
-                <span className="micro-chip subdued">{`${runs.length} Runs`}</span>
+                <div className="workspace-chip-row">
+                  <span className="micro-chip subdued">{`${runs.length} Runs`}</span>
+                  {activeTask?.language ? (
+                    <span className="micro-chip subdued">{activeTask.language}</span>
+                  ) : null}
+                  {activeTask?.task_type ? (
+                    <span className="micro-chip subdued">{activeTask.task_type}</span>
+                  ) : null}
+                </div>
               </div>
-              <span className="eyebrow">Run Cockpit</span>
+              <span className="eyebrow">Task Workspace</span>
               <h1>{activeTask?.name || "Task"}</h1>
               <p>{currentTaskSummary}</p>
             </div>
 
-            <div className="workspace-status">
-              <div className="status-block">
-                <span>Current Run</span>
-                <strong>{selectedRun?.run_id || "No Run"}</strong>
+            <div className="workspace-focus-card">
+              <div className="workspace-focus-head">
+                <span className="eyebrow">Current Focus</span>
+                <span className="micro-chip">{selectedRun?.run_id ? "当前 Run" : "等待创建"}</span>
               </div>
-              <div className="status-block">
-                <span>Status</span>
-                <strong>{selectedRun?.status || "idle"}</strong>
+              <strong className="workspace-focus-title">
+                {selectedRun?.run_id || "先创建一个 Run"}
+              </strong>
+              <p className="workspace-focus-copy">
+                {selectedRun
+                  ? `当前状态 ${selectedRun.status || "idle"}。${
+                      nextRecommendedAction
+                        ? `推荐优先推进 ${nextRecommendedAction.label}。`
+                        : "当前 run 可以继续查看产物或切换其他视图。"
+                    }`
+                  : "当前 task 还没有 run。先创建一个运行实例，再进入产物、复核与配置流。"}
+              </p>
+              <div className="workspace-status">
+                <div className="status-block">
+                  <span>当前 Run</span>
+                  <strong>{selectedRun?.run_id || "未创建"}</strong>
+                </div>
+                <div className="status-block">
+                  <span>状态</span>
+                  <strong>{selectedRun?.status || "idle"}</strong>
+                </div>
+                <div className="status-block">
+                  <span>摘要</span>
+                  <strong>{currentRunSummary}</strong>
+                </div>
               </div>
-              <div className="status-block">
-                <span>Summary</span>
-                <strong>{currentRunSummary}</strong>
+              <div className="workspace-focus-actions">
+                <button className="primary-button" type="button" onClick={workspacePrimaryAction.onClick}>
+                  {workspacePrimaryAction.label}
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => setWorkspaceTab("artifacts")}
+                  disabled={!selectedRun?.run_id}
+                >
+                  查看产物
+                </button>
               </div>
             </div>
           </section>
 
           <section className="workspace-layout">
             <aside className="run-rail">
-              <div className="section-head compact">
-                <div>
-                  <span className="eyebrow">Run Reel</span>
-                  <h2>Runs</h2>
-                </div>
-                <span className="micro-chip subdued">{runs.length}</span>
-              </div>
-
-              <button className="rail-cta" type="button" onClick={() => handleRunCommand("generate")}>
-                新建 Run
-              </button>
-
-              <div className="run-list">
-                {runs.map((run) => (
-                  <article
-                    key={run.run_id}
-                    className={classNames("run-card", selectedRun?.run_id === run.run_id && "is-active")}
-                  >
-                    <button
-                      className="run-card-hit"
-                      type="button"
-                      onClick={() => loadRun(activeTask.name, run.run_id)}
-                    >
-                      <span className="run-card-kicker">{run.last_stage || "fresh"}</span>
-                      <strong>{run.run_id}</strong>
-                      <p>{run.status || "idle"}</p>
-                      <div className="run-card-meta">
-                        <span>{formatDate(run.updated_at)}</span>
-                      </div>
-                    </button>
-                    <button className="danger-link" type="button" onClick={() => handleDeleteRun(run.run_id)}>
-                      Delete
-                    </button>
-                  </article>
-                ))}
-
-                {!runs.length && (
-                  <div className="empty-rail">
-                    <strong>这个 task 还没有 run</strong>
-                    <p>点击上方按钮创建第一个 run。</p>
+              <div className="run-rail-shell">
+                <div className="section-head compact">
+                  <div>
+                    <span className="eyebrow">Run Reel</span>
+                    <h2>Run 上下文</h2>
                   </div>
-                )}
+                  <span className="micro-chip subdued">{runs.length}</span>
+                </div>
+
+                <p className="run-rail-copy">左侧只负责切换 run，真正的推进操作放在右侧工作区。</p>
+
+                <button className="rail-cta" type="button" onClick={() => handleRunCommand("generate")}>
+                  新建 Run
+                </button>
+
+                <div className="run-list">
+                  {runs.map((run) => (
+                    <article
+                      key={run.run_id}
+                      className={classNames("run-card", selectedRun?.run_id === run.run_id && "is-active")}
+                    >
+                      <button
+                        className="run-card-hit"
+                        type="button"
+                        onClick={() => loadRun(activeTask.name, run.run_id)}
+                      >
+                        <div className="task-card-head">
+                          <span className="run-card-kicker">{run.last_stage || "fresh"}</span>
+                          <span className="micro-chip subdued">
+                            {selectedRun?.run_id === run.run_id ? "当前" : "可切换"}
+                          </span>
+                        </div>
+                        <strong>{run.run_id}</strong>
+                        <p>{run.status || "idle"}</p>
+                        <div className="run-card-meta">
+                          <span>{formatDate(run.updated_at)}</span>
+                        </div>
+                        <span className="task-card-entry">
+                          {selectedRun?.run_id === run.run_id ? "当前工作上下文" : "切换到这个 Run"}
+                        </span>
+                      </button>
+                      <button className="danger-link" type="button" onClick={() => handleDeleteRun(run.run_id)}>
+                        删除
+                      </button>
+                    </article>
+                  ))}
+
+                  {!runs.length && (
+                    <div className="empty-rail">
+                      <strong>这个 task 还没有 run</strong>
+                      <p>点击上方按钮创建第一个 run。</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </aside>
 

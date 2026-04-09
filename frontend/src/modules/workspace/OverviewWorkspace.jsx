@@ -54,15 +54,34 @@ export default function OverviewWorkspace({
   const checklistByCommand = Object.fromEntries(
     checklistItems.map((item) => [item.command, item])
   );
+  const completedCount = Object.keys(selectedRun?.stages || {}).length;
+
   return (
     <div className="panel-grid">
-      <section className="panel panel-wide">
+      <section className="panel panel-wide pipeline-panel">
         <div className="section-head">
           <div>
             <span className="eyebrow">Pipeline</span>
             <h2>推进当前 Run</h2>
           </div>
           <span className="muted-text">{selectedRun?.run_id || "先创建 run"}</span>
+        </div>
+        <div className="summary-chip-row pipeline-summary-row">
+          <article className="summary-chip">
+            <span>当前状态</span>
+            <strong>{selectedRun?.status || "idle"}</strong>
+          </article>
+          <article className="summary-chip">
+            <span>已完成阶段</span>
+            <strong>{completedCount}</strong>
+          </article>
+          <article className={classNames("summary-chip", nextRecommendedCommand && "is-warning")}>
+            <span>当前建议</span>
+            <strong>
+              {STAGE_ACTIONS.find((item) => item.command === nextRecommendedCommand)?.label ||
+                "先创建 Run"}
+            </strong>
+          </article>
         </div>
         {nextRecommendedCommand ? (
           <div className="next-step-banner">
@@ -80,11 +99,21 @@ export default function OverviewWorkspace({
               type="button"
               onClick={() => onRunCommand(nextRecommendedCommand)}
             >
-              执行推荐下一步
+              执行推荐步骤
             </button>
           </div>
-        ) : null}
-        <div className="command-grid">
+        ) : (
+          <div className="next-step-banner is-calm">
+            <div>
+              <strong>先创建一个 Run</strong>
+              <p>创建后才会有 artifacts、review pool 和后续诊断上下文。</p>
+            </div>
+            <button className="primary-button" type="button" onClick={() => onRunCommand("generate")}>
+              创建 Run
+            </button>
+          </div>
+        )}
+        <div className="command-grid pipeline-command-grid">
           {STAGE_ACTIONS.map((action) => {
             const checklistItem = checklistByCommand[action.command];
             const stageKey = action.command.replaceAll("-", "_");
@@ -141,7 +170,7 @@ export default function OverviewWorkspace({
                   </span>
                 </div>
                 <span className="command-card-arrow" aria-hidden="true">
-                  {isComplete ? "Done" : isLocked ? "Locked" : "Continue"}
+                  {isComplete ? "已完成" : isLocked ? "待前置步骤" : "继续推进"}
                 </span>
               </button>
             );

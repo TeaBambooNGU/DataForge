@@ -65,10 +65,10 @@ export const STAGE_ACTIONS = [
 ];
 
 export const WORKSPACE_TABS = [
-  { key: "overview", label: "Run" },
-  { key: "artifacts", label: "Artifacts" },
-  { key: "review", label: "Review" },
-  { key: "config", label: "Task Config" },
+  { key: "overview", label: "运行推进" },
+  { key: "artifacts", label: "产物诊断" },
+  { key: "review", label: "人工复核" },
+  { key: "config", label: "任务配置" },
 ];
 
 export const ARTIFACT_COPY = {

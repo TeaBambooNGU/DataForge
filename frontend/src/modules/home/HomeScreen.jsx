@@ -11,43 +11,72 @@ export default function HomeScreen({
   onOpenCreateTask,
   onDeleteTask,
 }) {
+  const totalRuns = tasks.reduce((sum, item) => sum + (item.run_count || 0), 0);
+  const spotlightTask = tasks.find((item) => item.run_count > 0) || tasks[0] || null;
+
   return (
     <main className="home-screen">
-      <section className="hero-panel">
+      <section className="hero-panel home-hero-panel">
         <div className="hero-copy">
-          <span className="eyebrow">Focal Action</span>
-          <h1>先进入一个 Task，再启动它的 Run。</h1>
+          <span className="eyebrow">Task Entry</span>
+          <h1>先选 Task，再推进 Run。</h1>
           <p>
-            首屏不再是后台导航，而是任务入口场。用户先挑选已有 task 或新建 task，进入后才看到 run、artifacts、review
-            与配置。
+            首页只做一件事: 进入一个任务工作区。进入后再处理 run、artifacts、review 与配置，避免首屏同时承担导航和操作。
           </p>
           <div className="hero-metrics">
             <div>
               <strong>{tasks.length}</strong>
-              <span>Tasks</span>
+              <span>任务数</span>
             </div>
             <div>
-              <strong>{tasks.reduce((sum, item) => sum + (item.run_count || 0), 0)}</strong>
-              <span>Runs</span>
+              <strong>{totalRuns}</strong>
+              <span>运行数</span>
             </div>
             <div>
               <strong>{settings.providers.length}</strong>
               <span>Providers</span>
             </div>
           </div>
+          <div className="hero-actions">
+            <button className="primary-button hero-primary-action" type="button" onClick={onOpenCreateTask}>
+              新建 Task
+            </button>
+            <button className="ghost-button" type="button" onClick={onRefresh}>
+              刷新任务列表
+            </button>
+          </div>
         </div>
 
         <div className="hero-aside">
           <div className="signal-card">
-            <span className="eyebrow">Launch Surface</span>
-            <strong>Open Existing Task</strong>
-            <p>直接挑一个任务进入工作舱，继续已有 run 或创建新的 run。</p>
+            <span className="eyebrow">Decision Rule</span>
+            <strong>已有任务向下选择，没有任务就新建。</strong>
+            <p>Task 是工作单元。先确定任务，再决定是否继续已有 run 或新建新的 run。</p>
           </div>
-          <button className="create-tile" type="button" onClick={onOpenCreateTask}>
-            <span className="eyebrow">New Task</span>
-            <strong>Create A Fresh Track</strong>
-            <p>新 task 会直接 scaffold 出默认配置，然后进入 React 工作台继续编辑。</p>
-          </button>
+          <div className="home-spotlight">
+            <span className="eyebrow">Quick Start</span>
+            {spotlightTask ? (
+              <>
+                <strong>{spotlightTask.name}</strong>
+                <p>
+                  {spotlightTask.run_count ? "这个 task 已有可继续的 run。" : "这个 task 已准备好，可以直接创建首个 run。"}
+                </p>
+                <div className="task-card-meta">
+                  <span>{`${spotlightTask.run_count || 0} runs`}</span>
+                  <span>{`${spotlightTask.labels?.length || 0} labels`}</span>
+                  <span>{spotlightTask.task_type || "workflow"}</span>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => onOpenTask(spotlightTask.name)}>
+                  继续这个 Task
+                </button>
+              </>
+            ) : (
+              <>
+                <strong>还没有任何 Task</strong>
+                <p>先创建一个任务 scaffold，再进入工作台推进数据流水线。</p>
+              </>
+            )}
+          </div>
         </div>
       </section>
 
@@ -55,11 +84,8 @@ export default function HomeScreen({
         <div className="section-head">
           <div>
             <span className="eyebrow">Task Field</span>
-            <h2>Choose Your Task</h2>
+            <h2>选择一个 Task</h2>
           </div>
-          <button className="ghost-button" type="button" onClick={onRefresh}>
-            刷新
-          </button>
         </div>
 
         <div className="task-grid">
@@ -69,18 +95,23 @@ export default function HomeScreen({
               className={classNames("task-card", index % 2 === 0 ? "tilt-left" : "tilt-right")}
             >
               <button className="task-card-hit" type="button" onClick={() => onOpenTask(task.name)}>
-                <span className="task-card-kicker">{task.theme || "task"}</span>
+                <div className="task-card-head">
+                  <span className="task-card-kicker">{task.theme || "task"}</span>
+                  <span className="micro-chip subdued">
+                    {task.run_count ? "可继续" : "待启动"}
+                  </span>
+                </div>
                 <strong>{task.name}</strong>
-                <p>
-                  {task.language || "zh"} / {task.task_type || "workflow"}
-                </p>
+                <p>{task.task_type || "workflow"}</p>
                 <div className="task-card-meta">
+                  <span>{task.language || "zh"}</span>
                   <span>{task.run_count || 0} runs</span>
                   <span>{task.labels?.length || 0} labels</span>
                 </div>
+                <span className="task-card-entry">进入任务工作台</span>
               </button>
               <button className="danger-link" type="button" onClick={() => onDeleteTask(task.name)}>
-                Delete
+                删除
               </button>
             </article>
           ))}

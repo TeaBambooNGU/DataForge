@@ -46,7 +46,7 @@ export default function ArtifactWorkspace({
           <div className="section-head">
             <div>
               <span className="eyebrow">Run Output</span>
-              <h2>Artifacts</h2>
+              <h2>产物导航</h2>
             </div>
           </div>
           <div className="artifact-sidebar-body">
@@ -55,8 +55,8 @@ export default function ArtifactWorkspace({
                 <div className="artifact-nav-hero-card">
                   <div className="artifact-nav-head">
                     <div>
-                      <h3>Artifact Navigator</h3>
-                      <p>按阶段聚类浏览当前 run 产物，优先查看推荐入口，再深入诊断。</p>
+                      <h3>先选一个 artifact</h3>
+                      <p>按阶段浏览当前 run 的产物。先看推荐入口，再决定是否深入原始内容。</p>
                     </div>
                     <span className="artifact-nav-count">{visibleArtifacts(selectedRun).length}</span>
                   </div>
@@ -186,7 +186,7 @@ export default function ArtifactWorkspace({
           <div className="section-head artifact-preview-head">
             <div className="artifact-preview-title">
               <span className="eyebrow">Artifact Preview</span>
-              <h2>{artifactKey || "选择 artifact"}</h2>
+              <h2>{artifactKey || "先选择一个 artifact"}</h2>
             </div>
             <div className="section-inline-actions artifact-toolbar">
               <input
@@ -248,6 +248,24 @@ export default function ArtifactWorkspace({
                         "-"}
                     </span>
                   </div>
+                  {artifactSummary.length ? (
+                    <div className="summary-chip-row artifact-summary-row">
+                      {artifactSummary.map((item) => (
+                        <article
+                          key={`${artifactPayload.key}-${item.label}`}
+                          className={classNames("summary-chip", item.tone && `is-${item.tone}`)}
+                        >
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="artifact-meta">
+                    <span>{artifactPayload.kind}</span>
+                    <span>{artifactPayload.relative_path}</span>
+                    <span>{ARTIFACT_COPY[artifactPayload.key] || "运行阶段的结构化输出。"}</span>
+                  </div>
                   <div className="artifact-explainer-grid">
                     <div className="artifact-detail-block">
                       <strong>作用</strong>
@@ -273,26 +291,6 @@ export default function ArtifactWorkspace({
                     </div>
                   </div>
                 </article>
-
-                <div className="artifact-meta">
-                  <span>{artifactPayload.kind}</span>
-                  <span>{artifactPayload.relative_path}</span>
-                  <span>{ARTIFACT_COPY[artifactPayload.key] || "运行阶段的结构化输出。"}</span>
-                </div>
-
-                {artifactSummary.length ? (
-                  <div className="summary-chip-row">
-                    {artifactSummary.map((item) => (
-                      <article
-                        key={`${artifactPayload.key}-${item.label}`}
-                        className={classNames("summary-chip", item.tone && `is-${item.tone}`)}
-                      >
-                        <span>{item.label}</span>
-                        <strong>{item.value}</strong>
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
 
                 {artifactPayload.key === "raw_candidates" && artifactViewMode === "structured" ? (
                   <div className="section-inline-actions raw-candidate-toolbar">
