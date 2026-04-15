@@ -21,6 +21,12 @@ def test_student_export_writes_training_artifacts(tmp_path: Path) -> None:
     metadata = read_json(outputs["training_metadata"])
 
     assert student_rows
-    assert student_rows[0]["messages"][0]["role"] == "user"
+    assert list(student_rows[0].keys()) == ["messages"]
+    assert student_rows[0]["messages"][0]["role"] == "system"
+    assert student_rows[0]["messages"][1]["role"] == "user"
     assert metadata["version_id"] == "run-student-001-student-train-chatml_jsonl"
+    assert metadata["artifact_role"] == "final_sft_dataset"
+    assert metadata["is_final_sft_dataset"] is True
+    assert metadata["canonical_dataset_path"].endswith("processed/filtered_train.jsonl")
+    assert metadata["has_system_prompt"] is True
     assert metadata["includes_hard_cases"] is False

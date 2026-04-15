@@ -88,12 +88,20 @@ def test_pipeline_smoke(tmp_path: Path, monkeypatch) -> None:
     assert len({sample["id"] for sample in gold_samples}) == len(gold_samples)
     eval_result = read_json(run.path_for("eval_result"))
     train_export_metadata = read_json(run.path_for("train_export_metadata"))
+    student_training_metadata = read_json(run.path_for("training_metadata"))
     hard_cases_metadata = read_json(run.path_for("hard_cases_metadata"))
     index_payload = read_json(run.index_path)
     run_entry = next(entry for entry in index_payload["runs"] if entry["run_id"] == run.run_id)
     assert eval_result["dataset"]["sample_count"] == len(gold_samples)
     assert eval_result["version"]["dataset_name"] == "eval-export"
-    assert train_export_metadata["dataset_name"] == "train-export"
+    assert train_export_metadata["dataset_name"] == "train-export-audit"
+    assert train_export_metadata["artifact_role"] == "audit_export"
+    assert train_export_metadata["is_final_sft_dataset"] is False
+    assert train_export_metadata["recommended_training_artifact"].endswith("training/student_train.jsonl")
+    assert student_training_metadata["dataset_name"] == "student-train"
+    assert student_training_metadata["artifact_role"] == "final_sft_dataset"
+    assert student_training_metadata["is_final_sft_dataset"] is True
+    assert student_training_metadata["canonical_dataset_path"].endswith("processed/filtered_train.jsonl")
     assert hard_cases_metadata["dataset_name"] == "hard-cases"
     assert run_entry["stages"]["eval"]["summary"]["sample_count"] == len(gold_samples)
     assert run_entry["stages"]["eval"]["summary"]["promptfoo_status"] == "ok"

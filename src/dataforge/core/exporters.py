@@ -60,29 +60,35 @@ def build_promptfoo_eval_rows(eval_rows: list[dict[str, Any]]) -> list[dict[str,
     return rows
 
 
-def _build_chatml_train_record(sample: dict[str, Any]) -> dict[str, Any]:
+def _build_chatml_train_record(sample: dict[str, Any], *, system_prompt: str | None = None) -> dict[str, Any]:
     annotation = sample.get("annotation", {})
     label = annotation.get("teacher_label") or annotation.get("final_label")
     if not label:
         raise ValueError(f"Sample {sample.get('id')} is missing a label for chatml export")
 
-    return {
-        "id": sample["id"],
-        "task_name": sample["task_name"],
-        "messages": [
+    messages: list[dict[str, str]] = []
+    normalized_system_prompt = (system_prompt or "").strip()
+    if normalized_system_prompt:
+        messages.append({"role": "system", "content": normalized_system_prompt})
+    messages.extend(
+        [
             {"role": "user", "content": sample["input"]["user_text"]},
             {
                 "role": "assistant",
                 "content": json.dumps({"action": label}, ensure_ascii=False, separators=(",", ":")),
             },
-        ],
-        "label": label,
-        "context": sample.get("context", {}),
-        "metadata": sample.get("metadata", {}),
-    }
+        ]
+    )
+    return {"messages": messages}
 
 
-def export_train_dataset(path: Path, samples: list[dict[str, Any]], format_name: str | None) -> dict[str, Any]:
+def export_train_dataset(
+    path: Path,
+    samples: list[dict[str, Any]],
+    format_name: str | None,
+    *,
+    system_prompt: str | None = None,
+) -> dict[str, Any]:
     resolved = _normalize_export_format(
         format_name,
         export_type="train",
@@ -92,7 +98,7 @@ def export_train_dataset(path: Path, samples: list[dict[str, Any]], format_name:
     if resolved == "raw_sample_jsonl":
         records = samples
     else:
-        records = [_build_chatml_train_record(sample) for sample in samples]
+        records = [_build_chatml_train_record(sample, system_prompt=system_prompt) for sample in samples]
     write_jsonl(path, records)
     return {
         "format": resolved,

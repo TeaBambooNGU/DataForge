@@ -14,6 +14,15 @@ class PromptfooExecutionError(RuntimeError):
     pass
 
 
+def _nested_promptfoo_results(result_payload: Any) -> dict[str, Any] | None:
+    if not isinstance(result_payload, dict):
+        return None
+    nested_results = result_payload.get("results")
+    if isinstance(nested_results, dict):
+        return nested_results
+    return None
+
+
 def _safe_div(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
@@ -115,6 +124,22 @@ def summarize_promptfoo_results(result_payload: Any) -> dict[str, Any]:
         return summary
 
     raw_summary = result_payload.get("summary")
+    if not isinstance(raw_summary, dict):
+        nested_results = _nested_promptfoo_results(result_payload)
+        if isinstance(nested_results, dict):
+            stats = nested_results.get("stats")
+            if isinstance(stats, dict):
+                successes = stats.get("successes")
+                failures = stats.get("failures")
+                if isinstance(successes, int):
+                    summary["passed_tests"] = successes
+                if isinstance(failures, int):
+                    summary["failed_tests"] = failures
+                total = summary["passed_tests"] + summary["failed_tests"]
+                if total:
+                    summary["total_tests"] = total
+                    summary["pass_rate"] = round(summary["passed_tests"] / total, 4)
+
     if isinstance(raw_summary, dict):
         for source_key, target_key in (
             ("passRate", "pass_rate"),
@@ -127,6 +152,10 @@ def summarize_promptfoo_results(result_payload: Any) -> dict[str, Any]:
                 summary[target_key] = value
 
     results = result_payload.get("results")
+    if isinstance(results, dict):
+        nested_list = results.get("results")
+        if isinstance(nested_list, list):
+            results = nested_list
     if isinstance(results, list):
         passed = 0
         failed = 0
@@ -260,6 +289,7 @@ def run_promptfoo_eval(
     command_runner = runner or subprocess.run
     results_path.parent.mkdir(parents=True, exist_ok=True)
     full_command = [*command, "eval", "-c", str(config_path), "--output", str(results_path), "--no-cache"]
+    status = "ok"
     try:
         completed = command_runner(
             full_command,
@@ -271,9 +301,18 @@ def run_promptfoo_eval(
     except FileNotFoundError as exc:
         raise PromptfooExecutionError(f"Promptfoo command not found: {command[0]}") from exc
     except subprocess.CalledProcessError as exc:
-        raise PromptfooExecutionError(
-            f"Promptfoo eval failed with exit code {exc.returncode}: {exc.stderr.strip() or exc.stdout.strip()}"
-        ) from exc
+        if exc.returncode == 100 and results_path.exists():
+            completed = subprocess.CompletedProcess(
+                exc.cmd,
+                exc.returncode,
+                stdout=exc.stdout,
+                stderr=exc.stderr,
+            )
+            status = "completed_with_failures"
+        else:
+            raise PromptfooExecutionError(
+                f"Promptfoo eval failed with exit code {exc.returncode}: {exc.stderr.strip() or exc.stdout.strip()}"
+            ) from exc
 
     result_payload: Any = {}
     if results_path.exists():
@@ -284,16 +323,28 @@ def run_promptfoo_eval(
                 result_payload = {}
 
     summary = {
-        "status": "ok",
+        "status": status,
         "command": full_command,
+        "exit_code": completed.returncode,
         "results_path": str(results_path),
         "stdout": completed.stdout.strip(),
         "stderr": completed.stderr.strip(),
     }
     if isinstance(result_payload, dict):
+        nested_results = _nested_promptfoo_results(result_payload)
         for key in ("results", "summary", "stats"):
             if key in result_payload:
                 summary[key] = result_payload[key]
+        if "summary" not in summary and isinstance(nested_results, dict):
+            stats = nested_results.get("stats")
+            if isinstance(stats, dict):
+                total_tests = stats.get("successes", 0) + stats.get("failures", 0)
+                summary["summary"] = {
+                    "passRate": round(stats["successes"] / total_tests, 4) if total_tests else None,
+                    "totalTests": total_tests,
+                    "passedTests": stats.get("successes", 0),
+                    "failedTests": stats.get("failures", 0),
+                }
         summary["results_overview"] = summarize_promptfoo_results(result_payload)
     return summary
 

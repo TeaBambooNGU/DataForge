@@ -5,9 +5,9 @@
       "task_name": "report-intent-distill",
       "run_root": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z",
       "created_at": "2026-04-04T05:10:32.215209+00:00",
-      "updated_at": "2026-04-04T05:57:39.506388+00:00",
-      "status": "review_validated",
-      "last_stage": "validate_review",
+      "updated_at": "2026-04-11T03:10:00.565893+00:00",
+      "status": "evaluated",
+      "last_stage": "student_export",
       "stages": {
         "generate": {
           "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/generate.json",
@@ -28,19 +28,21 @@
         },
         "filter_export": {
           "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/filter_export.json",
-          "completed_at": "2026-04-04T05:32:46.563145+00:00",
+          "completed_at": "2026-04-11T03:10:00.563051+00:00",
           "stats": {
             "kept": 50,
             "rejected": 0,
             "review_pool": 20,
             "train_samples": 30,
             "train_export_format": "chatml_jsonl",
+            "train_export_role": "audit_export",
             "historical_leakage_blocked": 0
           },
           "summary": {
             "format": "chatml_jsonl",
             "sample_count": 30,
             "path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/exports/train_dataset.jsonl",
+            "train_export_role": "audit_export",
             "historical_leakage_blocked": 0
           }
         },
@@ -66,6 +68,61 @@
             "reviewed_by": {}
           },
           "summary": {}
+        },
+        "build_gold": {
+          "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/build_gold.json",
+          "completed_at": "2026-04-07T16:02:30.692176+00:00",
+          "stats": {
+            "gold_samples": 9,
+            "hard_cases": 9
+          },
+          "summary": {}
+        },
+        "eval": {
+          "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/eval.json",
+          "completed_at": "2026-04-10T13:59:07.374258+00:00",
+          "stats": {
+            "sample_count": 9,
+            "overall_accuracy": 0.8889,
+            "macro_f1": 0.8,
+            "json_valid_rate": 1.0,
+            "hard_cases_accuracy": 0.8889,
+            "has_visible_report_false_accuracy": 0.0,
+            "mismatch_count": 1,
+            "parse_failure_count": 0,
+            "promptfoo_status": "completed_with_failures",
+            "promptfoo_pass_rate": 0.8889,
+            "eval_export_format": "promptfoo_jsonl"
+          },
+          "summary": {
+            "sample_count": 9,
+            "overall_accuracy": 0.8889,
+            "macro_f1": 0.8,
+            "json_valid_rate": 1.0,
+            "hard_cases_accuracy": 0.8889,
+            "has_visible_report_false_accuracy": 0.0,
+            "mismatch_count": 1,
+            "parse_failure_count": 0,
+            "promptfoo_status": "completed_with_failures",
+            "promptfoo_pass_rate": 0.8889
+          }
+        },
+        "student_export": {
+          "manifest_path": "/Users/teabamboo/Documents/AIplusLLM/DataForge/tasks/report-intent-distill/runs/run-20260404T051032Z/reports/manifests/student_export.json",
+          "completed_at": "2026-04-11T03:10:00.565562+00:00",
+          "stats": {
+            "student_sample_count": 30,
+            "student_format": "chatml_jsonl",
+            "artifact_role": "final_sft_dataset",
+            "has_sft_system_prompt": true
+          },
+          "summary": {
+            "version_id": "run-20260404T051032Z-student-train-chatml_jsonl",
+            "student_sample_count": 30,
+            "student_format": "chatml_jsonl",
+            "artifact_role": "final_sft_dataset",
+            "has_sft_system_prompt": true
+          }
         }
       }
     }

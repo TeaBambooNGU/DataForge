@@ -37,15 +37,23 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         train_export_path,
         train_samples,
         task.exports.get("train_format"),
+        system_prompt=task.exports.get("sft_system_prompt"),
     )
     train_version_summary = build_dataset_version_summary(
         task_name=task.name,
         run_id=task.run_id,
-        dataset_name="train-export",
+        dataset_name="train-export-audit",
         format_name=train_export_summary["format"],
         sample_count=train_export_summary["sample_count"],
         source_paths=[str(source), str(filtered_train_path)],
-        extra={"historical_leakage": historical_leakage.summary},
+        extra={
+            "artifact_role": "audit_export",
+            "is_final_sft_dataset": False,
+            "canonical_dataset_path": str(filtered_train_path),
+            "recommended_training_artifact": str(task.path_for("student_train")),
+            "historical_leakage": historical_leakage.summary,
+            "note": "此文件用于审计和通用导出检查；最终可直接微调的交付物由 student-export 生成。",
+        },
     )
     write_json(train_export_metadata_path, train_version_summary)
     write_json(review_json_path, filtered.review_pool)
@@ -73,9 +81,14 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
             "review_pool": len(filtered.review_pool),
             "train_samples": len(train_samples),
             "train_export_format": train_export_summary["format"],
+            "train_export_role": "audit_export",
             "historical_leakage_blocked": historical_leakage.summary["blocked_count"],
         },
-        summary={**train_export_summary, "historical_leakage_blocked": historical_leakage.summary["blocked_count"]},
+        summary={
+            **train_export_summary,
+            "train_export_role": "audit_export",
+            "historical_leakage_blocked": historical_leakage.summary["blocked_count"],
+        },
         details={"train_export": train_export_summary, "train_version": train_version_summary},
         run_id=task.run_id,
     )

@@ -14,7 +14,13 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
     student_train_path = task.path_for("student_train")
     training_metadata_path = task.path_for("training_metadata")
     student_format = task.exports.get("student_format") or task.exports.get("train_format") or "chatml_jsonl"
-    student_export_summary = export_train_dataset(student_train_path, samples, student_format)
+    system_prompt = task.exports.get("sft_system_prompt")
+    student_export_summary = export_train_dataset(
+        student_train_path,
+        samples,
+        student_format,
+        system_prompt=system_prompt,
+    )
     training_metadata = build_dataset_version_summary(
         task_name=task.name,
         run_id=task.run_id,
@@ -23,8 +29,12 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         sample_count=student_export_summary["sample_count"],
         source_paths=[str(source)],
         extra={
+            "artifact_role": "final_sft_dataset",
+            "is_final_sft_dataset": True,
+            "canonical_dataset_path": str(source),
             "source_artifact": str(source),
             "student_train_path": str(student_train_path),
+            "has_system_prompt": bool((system_prompt or "").strip()),
             "includes_hard_cases": False,
             "note": "hard_cases 默认不回流训练；如需回流，必须产出新的训练版本并单独记录原因。",
         },
@@ -36,17 +46,21 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         manifest_path,
         task_name=task.name,
         stage_name="student_export",
-        runtime={"student_format": student_export_summary["format"]},
+        runtime={"student_format": student_export_summary["format"], "sft_system_prompt": bool((system_prompt or "").strip())},
         input_paths=[str(source)],
         output_paths=[str(student_train_path), str(training_metadata_path)],
         stats={
             "student_sample_count": student_export_summary["sample_count"],
             "student_format": student_export_summary["format"],
+            "artifact_role": "final_sft_dataset",
+            "has_sft_system_prompt": bool((system_prompt or "").strip()),
         },
         summary={
             "version_id": training_metadata["version_id"],
             "student_sample_count": training_metadata["sample_count"],
             "student_format": training_metadata["format"],
+            "artifact_role": "final_sft_dataset",
+            "has_sft_system_prompt": bool((system_prompt or "").strip()),
         },
         details=training_metadata,
         run_id=task.run_id,

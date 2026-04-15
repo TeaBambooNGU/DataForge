@@ -784,6 +784,32 @@ def _artifact_kind(path: Path) -> str:
     return "text"
 
 
+def _artifact_role_meta(artifact_key: str) -> dict[str, Any]:
+    mapping = {
+        "filtered_train": {
+            "artifact_role": "canonical_dataset",
+            "role_badge": {"label": "Canonical Dataset", "tone": "success"},
+        },
+        "train_export": {
+            "artifact_role": "audit_export",
+            "role_badge": {"label": "Audit Export", "tone": "warning"},
+        },
+        "train_export_metadata": {
+            "artifact_role": "audit_metadata",
+            "role_badge": {"label": "Audit Metadata", "tone": "warning"},
+        },
+        "student_train": {
+            "artifact_role": "final_sft_dataset",
+            "role_badge": {"label": "Final SFT Dataset", "tone": "success"},
+        },
+        "training_metadata": {
+            "artifact_role": "final_sft_metadata",
+            "role_badge": {"label": "Final SFT Metadata", "tone": "success"},
+        },
+    }
+    return mapping.get(artifact_key, {"artifact_role": "general", "role_badge": None})
+
+
 def _serialize_artifact_meta(run: TaskRun, artifact_key: str, relative_path: str) -> dict[str, Any]:
     path = run.path_for(artifact_key)
     exists = path.exists()
@@ -795,6 +821,7 @@ def _serialize_artifact_meta(run: TaskRun, artifact_key: str, relative_path: str
         "kind": _artifact_kind(path),
         "exists": exists,
         "size_bytes": path.stat().st_size if exists else 0,
+        **_artifact_role_meta(artifact_key),
     }
 
 
@@ -1178,14 +1205,18 @@ def _ensure_command_is_runnable(task: TaskConfig, command: str, task_run: TaskRu
 def create_app(project_root: Path | None = None) -> FastAPI:
     resolved_root = (project_root or Path.cwd()).resolve()
     frontend_dir = resolved_root / "frontend"
-    if not frontend_dir.exists():
-        raise FileNotFoundError(f"Frontend directory not found: {frontend_dir}")
+    frontend_dist_dir = frontend_dir / "dist"
+    if not frontend_dist_dir.exists():
+        raise FileNotFoundError(
+            f"Frontend build directory not found: {frontend_dist_dir}. "
+            "Run `cd frontend && npm install && npm run build` first."
+        )
 
     load_dotenv(resolved_root / ".env")
 
     app = FastAPI(title="DataForge Workbench", version="0.1.0")
     app.state.project_root = resolved_root
-    app.mount("/assets", StaticFiles(directory=str(frontend_dir)), name="assets")
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist_dir)), name="assets")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -1366,6 +1397,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "truncated": len(text) > max_chars,
         }
 
+    @app.get("/api/tasks/{task_name}/runs/{run_id}/artifacts/{artifact_key}/download")
+    def download_artifact(task_name: str, run_id: str, artifact_key: str) -> FileResponse:
+        task = _load_task(resolved_root, task_name)
+        _find_run_entry(task, run_id)
+        if artifact_key != "student_train":
+            raise _http_404(f"Download is not available for artifact: {artifact_key}")
+
+        run = TaskRun(task=task, run_id=run_id)
+        path = run.path_for(artifact_key)
+        if not path.exists():
+            raise _http_404(f"Artifact file not found: {artifact_key}")
+
+        return FileResponse(
+            path,
+            media_type="application/x-ndjson",
+            filename=path.name,
+        )
+
     @app.get("/api/tasks/{task_name}/runs/{run_id}/review-records")
     def get_review_records(task_name: str, run_id: str) -> dict[str, Any]:
         task = _load_task(resolved_root, task_name)
@@ -1400,7 +1449,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def workbench() -> FileResponse:
-        return FileResponse(frontend_dir / "index.html")
+        return FileResponse(frontend_dist_dir / "index.html")
 
     return app
 
