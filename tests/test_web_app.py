@@ -28,10 +28,13 @@ from dataforge.web.app import (
     _serialize_task_config_files,
 )
 from dataforge.providers.openai_compatible import OpenAICompatibleError
+from dataforge.web.app import create_app
 
 
 def _create_test_project(tmp_path: Path) -> Path:
-    (tmp_path / "frontend").mkdir()
+    frontend_dist = tmp_path / "frontend" / "dist"
+    frontend_dist.mkdir(parents=True)
+    (frontend_dist / "index.html").write_text("<!doctype html><html><body>ok</body></html>", encoding="utf-8")
     config_dir = tmp_path / "tasks" / "report-intent-distill" / "configs"
     config_dir.mkdir(parents=True)
     (config_dir / "task.yaml").write_text(
@@ -52,6 +55,27 @@ def _create_test_project(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+def test_student_train_download_endpoint_returns_file(tmp_path: Path) -> None:
+    project_root = _create_test_project(tmp_path)
+    task = load_task_config(project_root, "report-intent-distill")
+    run = create_task_run(task, "run-download-001")
+    artifact_path = run.path_for("student_train")
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text('{"messages":[{"role":"user","content":"hi"}]}\n', encoding="utf-8")
+
+    app = create_app(project_root)
+    download_endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", "") == "/api/tasks/{task_name}/runs/{run_id}/artifacts/{artifact_key}/download"
+    )
+    response = download_endpoint(task.name, run.run_id, "student_train")
+
+    assert Path(response.path) == artifact_path
+    assert response.media_type == "application/x-ndjson"
+    assert response.filename == "student_train.jsonl"
 
 
 def test_serialize_run_exposes_eval_summary(tmp_path: Path) -> None:
@@ -76,6 +100,9 @@ def test_serialize_run_exposes_eval_summary(tmp_path: Path) -> None:
 
     assert serialized["evaluation"] == manifest["summary"]
     assert any(artifact["key"] == "eval_result" for artifact in serialized["artifacts"])
+    training_artifact = next(artifact for artifact in serialized["artifacts"] if artifact["key"] == "student_train")
+    assert training_artifact["artifact_role"] == "final_sft_dataset"
+    assert training_artifact["role_badge"]["label"] == "Final SFT Dataset"
 
 
 def test_run_command_rejects_repeated_stage_for_existing_run(tmp_path: Path) -> None:

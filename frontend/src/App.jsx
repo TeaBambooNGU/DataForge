@@ -65,6 +65,8 @@ function App() {
   const [settings, setSettings] = useState({ providers: [] });
   const [settingsDraft, setSettingsDraft] = useState({ providers: [] });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsView, setSettingsView] = useState("list");
+  const [customProviderDraft, setCustomProviderDraft] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [createTaskDraft, setCreateTaskDraft] = useState(DEFAULT_CREATE_TASK);
   const [artifactKey, setArtifactKey] = useState(null);
@@ -105,10 +107,6 @@ function App() {
   const [artifactNavCategoryFilter, setArtifactNavCategoryFilter] = useState("all");
   const deferredArtifactSearch = useDeferredValue(artifactSearch);
 
-  const settingsDirty = useMemo(
-    () => JSON.stringify(settingsDraft) !== JSON.stringify(settings),
-    [settingsDraft, settings]
-  );
   const taskConfigDirty = useMemo(
     () => JSON.stringify(taskConfigDraft) !== JSON.stringify(taskConfigBaseline),
     [taskConfigDraft, taskConfigBaseline]
@@ -265,6 +263,12 @@ function App() {
     () => groupArtifactsByCategory(filteredRunArtifacts),
     [filteredRunArtifacts]
   );
+  const artifactDownloadUrl = useMemo(() => {
+    if (!activeTask?.name || !selectedRun?.run_id || artifactKey !== "student_train") {
+      return null;
+    }
+    return `/api/tasks/${activeTask.name}/runs/${selectedRun.run_id}/artifacts/${artifactKey}/download`;
+  }, [activeTask?.name, artifactKey, selectedRun?.run_id]);
 
   const recommendedArtifactKeys = useMemo(
     () => new Set(getRecommendedArtifactKeys(selectedRun)),
@@ -358,6 +362,14 @@ function App() {
     setMessage(text);
     setMessageTone(tone);
   }
+
+  const openArtifact = useCallback((key) => {
+    if (!key) {
+      return;
+    }
+    setWorkspaceTab("artifacts");
+    setArtifactKey(key);
+  }, []);
 
   const loadBoot = useCallback(async () => {
     setBooting(true);
@@ -707,33 +719,45 @@ function App() {
     }
   }
 
-  async function handleSaveSettings() {
+  function serializeProviders(providers) {
+    return providers.map((provider) => ({
+      name: provider.editable
+        ? normalizeProviderId(provider.name || provider.label || "custom_provider")
+        : provider.name,
+      label: provider.editable
+        ? normalizeProviderId(provider.label || provider.name || "custom_provider")
+        : provider.label,
+      description: provider.description,
+      badge: provider.badge,
+      implementation: provider.implementation,
+      base_url_env: provider.env_keys.base_url_env,
+      api_key_env: provider.env_keys.api_key_env,
+      base_url: provider.config.base_url,
+      api_key: provider.config.api_key || null,
+      default_model: provider.config.default_model,
+      models: provider.models,
+    }));
+  }
+
+  async function persistProviders(providers, successMessage) {
     setSavingSettings(true);
     try {
       const response = await api("/api/settings/llm", {
         method: "PUT",
         body: JSON.stringify({
-          providers: settingsDraft.providers.map((provider) => ({
-            name: provider.name,
-            label: provider.label,
-            description: provider.description,
-            badge: provider.badge,
-            implementation: provider.implementation,
-            base_url_env: provider.env_keys.base_url_env,
-            api_key_env: provider.env_keys.api_key_env,
-            base_url: provider.config.base_url,
-            api_key: provider.config.api_key || null,
-            default_model: provider.config.default_model,
-            models: provider.models,
-          })),
+          providers: serializeProviders(providers),
         }),
       });
       const normalizedSettings = normalizeSettingsPayload(response.settings);
       setSettings(normalizedSettings);
       setSettingsDraft(deepClone(normalizedSettings));
-      setFlashMessage("Provider 设置已保存", "success");
+      setSettingsView("list");
+      setCustomProviderDraft(null);
+      setFlashMessage(successMessage, "success");
+      return normalizedSettings;
     } catch (error) {
       setFlashMessage(error.message, "error");
+      throw error;
     } finally {
       setSavingSettings(false);
     }
@@ -755,32 +779,14 @@ function App() {
         }),
       });
       setLlmTests((current) => ({ ...current, [provider.name]: result }));
-      if (result.models?.length) {
-        setSettingsDraft((current) => ({
-          providers: current.providers.map((item) =>
-            item.name === provider.name
-              ? {
-                  ...item,
-                  models: {
-                    generator: result.models,
-                    teacher: result.models,
-                    eval: result.models,
-                  },
-                  config: {
-                    ...item.config,
-                    default_model: result.latest_model || result.model || item.config.default_model,
-                  },
-                }
-              : item
-          ),
-        }));
-      }
       setFlashMessage(
         result.ok ? `${provider.name} 连接成功` : `${provider.name} 连接失败`,
         result.ok ? "success" : "error"
       );
+      return result;
     } catch (error) {
       setFlashMessage(error.message, "error");
+      throw error;
     } finally {
       setTestingProvider("");
     }
@@ -794,15 +800,44 @@ function App() {
         }
         const nextProvider = updater(deepClone(provider));
         if (nextProvider.editable) {
-          const normalizedName = normalizeProviderId(nextProvider.name);
+          const rawName = String(nextProvider.name || "").trim().toLowerCase();
+          const normalizedName = rawName ? normalizeProviderId(rawName) : "";
           nextProvider.name = normalizedName;
           nextProvider.label = normalizedName;
-          nextProvider.env_keys.base_url_env = buildCustomEnvKey(normalizedName, "BASE_URL");
-          nextProvider.env_keys.api_key_env = buildCustomEnvKey(normalizedName, "API_KEY");
+          nextProvider.env_keys.base_url_env = buildCustomEnvKey(
+            normalizedName || "custom_provider",
+            "BASE_URL"
+          );
+          nextProvider.env_keys.api_key_env = buildCustomEnvKey(
+            normalizedName || "custom_provider",
+            "API_KEY"
+          );
         }
         return nextProvider;
       }),
     }));
+  }
+
+  function updateCustomProviderDraft(updater) {
+    setCustomProviderDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      const nextProvider = updater(deepClone(current));
+      const rawName = String(nextProvider.name || "").trim().toLowerCase();
+      const normalizedName = rawName ? normalizeProviderId(rawName) : "";
+      nextProvider.name = normalizedName;
+      nextProvider.label = normalizedName;
+      nextProvider.env_keys.base_url_env = buildCustomEnvKey(
+        normalizedName || "custom_provider",
+        "BASE_URL"
+      );
+      nextProvider.env_keys.api_key_env = buildCustomEnvKey(
+        normalizedName || "custom_provider",
+        "API_KEY"
+      );
+      return nextProvider;
+    });
   }
 
   function updateTaskConfigJsonField(field, updater, fallback) {
@@ -954,15 +989,45 @@ function App() {
   }
 
   function addCustomProvider() {
-    setSettingsDraft((current) => ({
-      providers: [...current.providers, emptyCustomProvider(current.providers.length + 1)],
-    }));
+    setCustomProviderDraft(emptyCustomProvider(settingsDraft.providers.length + 1));
+    setSettingsView("create");
   }
 
-  function removeCustomProvider(providerName) {
-    setSettingsDraft((current) => ({
-      providers: current.providers.filter((provider) => provider.name !== providerName),
-    }));
+  function cancelCustomProviderCreate() {
+    setCustomProviderDraft(null);
+    setSettingsView("list");
+  }
+
+  async function commitCustomProviderDraft() {
+    if (!customProviderDraft) {
+      return;
+    }
+    const normalizedDraft = {
+      ...deepClone(customProviderDraft),
+      name: normalizeProviderId(customProviderDraft.name || customProviderDraft.label || "custom_provider"),
+    };
+    normalizedDraft.label = normalizedDraft.name;
+    normalizedDraft.env_keys.base_url_env = buildCustomEnvKey(normalizedDraft.name, "BASE_URL");
+    normalizedDraft.env_keys.api_key_env = buildCustomEnvKey(normalizedDraft.name, "API_KEY");
+    await persistProviders([...settingsDraft.providers, normalizedDraft], `已添加 ${normalizedDraft.name}`);
+  }
+
+  async function removeCustomProvider(providerName) {
+    await persistProviders(
+      settingsDraft.providers.filter((provider) => provider.name !== providerName),
+      `已删除 ${providerName}`
+    );
+  }
+
+  async function saveProvider(providerName, nextProvider) {
+    const nextProviders = settingsDraft.providers.map((provider) =>
+      provider.name === providerName ? deepClone(nextProvider) : provider
+    );
+    const savedProviderName =
+      nextProvider.editable && (nextProvider.name || nextProvider.label)
+        ? normalizeProviderId(nextProvider.name || nextProvider.label)
+        : nextProvider.name;
+    await persistProviders(nextProviders, `已保存 ${savedProviderName}`);
   }
 
   function updateReviewRecord(index, updater) {
@@ -1084,7 +1149,7 @@ function App() {
                   ? `当前状态 ${selectedRun.status || "idle"}。${
                       nextRecommendedAction
                         ? `推荐优先推进 ${nextRecommendedAction.label}。`
-                        : "当前 run 可以继续查看产物或切换其他视图。"
+                        : "当前 run 已可直接查看当前产物，也可以切换其他工作区。"
                     }`
                   : "当前 task 还没有 run。先创建一个运行实例，再进入产物、复核与配置流。"}
               </p>
@@ -1105,14 +1170,6 @@ function App() {
               <div className="workspace-focus-actions">
                 <button className="primary-button" type="button" onClick={workspacePrimaryAction.onClick}>
                   {workspacePrimaryAction.label}
-                </button>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => setWorkspaceTab("artifacts")}
-                  disabled={!selectedRun?.run_id}
-                >
-                  查看产物
                 </button>
               </div>
             </div>
@@ -1201,6 +1258,7 @@ function App() {
                   busyCommand={busyCommand}
                   selectedRunCompletedStages={selectedRunCompletedStages}
                   onRunCommand={handleRunCommand}
+                  onOpenArtifact={openArtifact}
                 />
               )}
 
@@ -1224,6 +1282,7 @@ function App() {
                   artifactViewMode={artifactViewMode}
                   setArtifactViewMode={setArtifactViewMode}
                   artifactPayload={artifactPayload}
+                  artifactDownloadUrl={artifactDownloadUrl}
                   artifactSummary={artifactSummary}
                   artifactLoading={artifactLoading}
                   rawCandidateViewMode={rawCandidateViewMode}
@@ -1312,19 +1371,31 @@ function App() {
         <SettingsDrawer
           settings={settings}
           settingsDraft={settingsDraft}
-          onClose={() => setSettingsOpen(false)}
-          onReset={() => setSettingsDraft(deepClone(settings))}
+          settingsView={settingsView}
+          customProviderDraft={customProviderDraft}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsView("list");
+            setCustomProviderDraft(null);
+          }}
+          onReset={() => {
+            setSettingsDraft(deepClone(settings));
+            setSettingsView("list");
+            setCustomProviderDraft(null);
+          }}
           onAddCustomProvider={addCustomProvider}
+          onCancelCustomProvider={cancelCustomProviderCreate}
+          onCreateCustomProvider={commitCustomProviderDraft}
           savingSettings={savingSettings}
-          onSaveSettings={handleSaveSettings}
           providerStatusSummary={providerStatusSummary}
           llmTests={llmTests}
           testingProvider={testingProvider}
           onRemoveCustomProvider={removeCustomProvider}
+          onSaveProvider={saveProvider}
           onTestProvider={handleTestProvider}
           updateProvider={updateProvider}
+          updateCustomProviderDraft={updateCustomProviderDraft}
           setFlashMessage={setFlashMessage}
-          settingsDirty={settingsDirty}
         />
       ) : null}
     </div>

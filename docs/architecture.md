@@ -127,12 +127,12 @@
 - CLI 数据处理链路:
   1. `generate`：读取 scenario matrix，调用 generator provider 产出 `raw/raw_candidates.jsonl`，并做 schema 校验。
   2. `classify`：读取候选样本，调用 teacher provider 输出 `raw/teacher_labeled.jsonl`，在 `annotation` 中补齐教师标签、原始输出、解析状态与错误码。
-  3. `filter-export`：读取教师标注结果，基于 `user_text`、`parse_ok`、允许标签、长度限制和任务规则过滤；先按 `(user_text.lower(), has_visible_report, teacher_label)` 去重，再对训练子集执行跨 run 泄漏拦截，最后输出内部训练样本、配置化 train export、版本元数据、拒绝集、复核池与空的 Promptfoo 占位文件。
+  3. `filter-export`：读取教师标注结果，基于 `user_text`、`parse_ok`、允许标签、长度限制和任务规则过滤；先按 `(user_text.lower(), has_visible_report, teacher_label)` 去重，再对训练子集执行跨 run 泄漏拦截，冻结 `processed/filtered_train.jsonl` 作为内部标准训练集（canonical dataset），同时输出用于审计/通用对接的 `exports/train_dataset.jsonl`、对应版本元数据、拒绝集、复核池与空的 Promptfoo 占位文件。
   4. `review-export`：把 review pool 组装成待人工复核模板 `processed/review_candidates.jsonl`。
   5. `validate-review`：校验 `processed/review_results.jsonl`，输出 `reports/review_validation.md`。
   6. `build-gold`：先按 `sample_id` 聚合同一样本的多轮人工复核记录，再将最终有效结论回写到教师标注样本，冻结为 `gold/gold_eval.jsonl`，并抽取带 `hard_case_reason` / `hard_case_recorded_at` 的 hard cases，同时输出 `hard_cases_metadata.json`。
   7. `eval`：对 gold 集重新做预测，输出 `exports/eval_dataset.jsonl`、`exports/eval_dataset_metadata.json`、`exports/eval_predictions.jsonl`、`exports/eval_for_promptfoo.jsonl`、`reports/eval_result.json`、`reports/promptfoo/config.yaml`、`reports/promptfoo/results.json`、`reports/eval_summary.md`、`reports/confusion_analysis.md`。
-  8. `student-export`：读取 `processed/filtered_train.jsonl`，按 `exports.student_format` 生成 `training/student_train.jsonl` 与 `training/metadata.json`。
+  8. `student-export`：读取 `processed/filtered_train.jsonl` 这个 canonical dataset，按 `exports.student_format` 与 student 专用导出配置生成 `training/student_train.jsonl` 与 `training/metadata.json`；`student_train.jsonl` 是默认最终可直接微调的交付物。
 - Web 控制流:
   1. 前端初始化时通过 `refreshAll()` 先调用 `GET /api/settings/llm` 与 `GET /api/tasks`，同步全局 provider 状态和 task 列表。
   2. 用户点击侧边栏 Workspace 设置入口后，页面切到 `settings` 视图；前端基于 provider 数、ready 数与最近 probe 结果渲染 workspace 摘要。

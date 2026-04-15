@@ -17,12 +17,19 @@ def test_export_train_dataset_supports_chatml_jsonl(tmp_path: Path) -> None:
         }
     ]
 
-    summary = export_train_dataset(path, samples, "chatml_jsonl")
+    summary = export_train_dataset(
+        path,
+        samples,
+        "chatml_jsonl",
+        system_prompt='你是一个分类器。只输出 {"action":"..."}',
+    )
     rows = read_jsonl(path)
 
     assert summary["format"] == "chatml_jsonl"
-    assert rows[0]["messages"][0]["role"] == "user"
-    assert rows[0]["messages"][1]["content"] == '{"action":"rewrite_report"}'
+    assert list(rows[0].keys()) == ["messages"]
+    assert rows[0]["messages"][0]["role"] == "system"
+    assert rows[0]["messages"][1]["role"] == "user"
+    assert rows[0]["messages"][2]["content"] == '{"action":"rewrite_report"}'
 
 
 def test_export_eval_dataset_supports_prediction_jsonl(tmp_path: Path) -> None:

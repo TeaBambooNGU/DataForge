@@ -49,3 +49,8 @@ exports:
   train_format: chatml_jsonl
   eval_format: promptfoo_jsonl
   student_format: chatml_jsonl
+  sft_system_prompt: |
+    你是一个意图分类器。
+    你必须根据用户输入，在以下标签中只选择一个：chat、rewrite_report、regenerate_report。
+    仅输出单行 JSON，格式必须为 {"action":"标签名"}。
+    如果当前没有可见报告，不允许输出 rewrite_report。

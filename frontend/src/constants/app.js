@@ -24,7 +24,7 @@ export const STAGE_ACTIONS = [
     command: "filter-export",
     label: "Filter",
     eyebrow: "04",
-    description: "过滤、去重并导出训练样本。",
+    description: "裁决内部标准训练集，并生成审计导出。",
     requiresRun: true,
   },
   {
@@ -59,7 +59,7 @@ export const STAGE_ACTIONS = [
     command: "student-export",
     label: "Student Export",
     eyebrow: "09",
-    description: "导出标准化 student 训练输入。",
+    description: "生成最终可微调的 student 训练文件。",
     requiresRun: true,
   },
 ];
@@ -82,7 +82,15 @@ export const ARTIFACT_COPY = {
   hard_cases: "高风险 hard cases 子集。",
   eval_predictions: "模型预测与错例明细。",
   eval_result: "结构化评测结论。",
-  student_train: "标准化 student 训练输入。",
+  student_train: "最终可微调的 student 训练文件。",
+};
+
+export const ARTIFACT_ROLE_BADGES = {
+  filtered_train: { label: "Canonical Dataset", tone: "success" },
+  train_export: { label: "Audit Export", tone: "warning" },
+  train_export_metadata: { label: "Audit Metadata", tone: "warning" },
+  student_train: { label: "Final SFT Dataset", tone: "success" },
+  training_metadata: { label: "Final SFT Metadata", tone: "success" },
 };
 
 export const ARTIFACT_EXPLANATIONS = {
@@ -104,21 +112,21 @@ export const ARTIFACT_EXPLANATIONS = {
   },
   filtered_train: {
     stage: "filter-export",
-    role: "经过去重和规则过滤后，可以直接进入训练的数据子集。",
-    usage: "这是最终可训练样本池，适合看数据纯度和标签分布是否符合预期。",
-    readingHint: "如果这里数量偏少，回头检查 teacher_labeled、过滤规则和 rejected_samples。",
+    role: "经过去重和规则过滤后冻结的内部标准训练集，是后续所有训练导出的 canonical dataset。",
+    usage: "优先在这里检查样本纯度、标签分布和训练边界是否合理；这是 student-export 的直接输入。",
+    readingHint: "如果这里数量偏少，回头检查 teacher_labeled、过滤规则和 rejected_samples；这里才是训练集裁决结果。",
   },
   train_export: {
     stage: "filter-export",
-    role: "按 exports.train_format 渲染出来的训练导出文件，用于下游 student 或外部训练器消费。",
-    usage: "这里反映的是配置化导出格式，不一定和内部 filtered_train 的原始样本结构相同。",
-    readingHint: "先确认格式字段是否符合预期，再决定是否继续接训练执行器。",
+    role: "按 exports.train_format 生成的审计/通用导出文件，用于检查格式化结果或对接通用下游，不是默认最终微调交付物。",
+    usage: "当你要确认配置化导出格式是否正确，或需要给外部工具做通用导出时看这里。",
+    readingHint: "先确认格式字段是否符合预期；若要直接微调，优先使用 student_train。",
   },
   train_export_metadata: {
     stage: "filter-export",
-    role: "训练导出版本摘要，记录格式、样本数和历史泄漏拦截结果。",
-    usage: "需要确认跨版本去重是否生效时，优先看这份元数据而不是手动翻 rejected_samples。",
-    readingHint: "重点看 version_id、historical_leakage、sample_count。",
+    role: "审计导出版本摘要，记录格式、样本数、canonical dataset 来源和历史泄漏拦截结果。",
+    usage: "需要确认 train_export 的用途、来源以及跨版本去重是否生效时，优先看这份元数据。",
+    readingHint: "重点看 artifact_role、canonical_dataset_path、historical_leakage、sample_count。",
   },
   rejected_samples: {
     stage: "filter-export",
@@ -182,15 +190,15 @@ export const ARTIFACT_EXPLANATIONS = {
   },
   student_train: {
     stage: "student-export",
-    role: "标准化 student 训练输入文件，是后续训练执行器最直接消费的产物。",
-    usage: "如果准备接 student 蒸馏或分类训练，优先使用这份文件而不是内部中间样本。",
-    readingHint: "先确认消息结构、标签编码和 sample_count，再决定是否启动训练。",
+    role: "最终可直接上传微调的 student 训练文件，是整个训练链路的正式交付物。",
+    usage: "如果准备接 student 蒸馏或分类训练，优先使用这份文件，而不是 train_export 或内部中间样本。",
+    readingHint: "先确认 messages 结构、system prompt、标签 JSON 和 sample_count，再决定是否启动训练。",
   },
   training_metadata: {
     stage: "student-export",
-    role: "student 训练产物的版本说明，记录来源 run、格式、样本量和回流约束。",
-    usage: "用于追踪这版训练输入来自哪里，以及是否包含 hard cases 等关键治理信息。",
-    readingHint: "优先看 version_id、source_artifact、format、includes_hard_cases。",
+    role: "最终 student 训练文件的版本说明，记录 canonical dataset 来源、格式、样本量和回流约束。",
+    usage: "用于追踪这版 final SFT dataset 来自哪里，以及是否包含 system prompt、hard cases 等关键治理信息。",
+    readingHint: "优先看 is_final_sft_dataset、canonical_dataset_path、has_system_prompt、format、includes_hard_cases。",
   },
   hard_cases_metadata: {
     stage: "build-gold",
@@ -239,7 +247,7 @@ export const ARTIFACT_CATEGORY_META = {
   },
   exports: {
     label: "Evaluation Inputs",
-    description: "面向外部评测工具和预测结果的导出层。",
+    description: "通用导出与外部工具输入层；train_export 主要用于审计，非最终 student 微调交付物。",
   },
   reports: {
     label: "Readable Reports",
@@ -258,7 +266,7 @@ export const ARTIFACT_CATEGORY_META = {
 export const RECOMMENDED_ARTIFACTS_BY_STAGE = {
   generate: ["raw_candidates"],
   classify: ["teacher_labeled"],
-  "filter-export": ["rejected_samples", "filtered_train", "train_export"],
+  "filter-export": ["filtered_train", "rejected_samples", "train_export"],
   "review-export": ["review_candidates"],
   "validate-review": ["review_results", "review_validation_report"],
   "build-gold": ["gold_eval", "hard_cases"],
@@ -323,9 +331,10 @@ export const PIPELINE_STAGE_META = {
       "重点关注 parse_fail 和 teacher_label 的稳定性；这一层才是后续过滤、复核和评测使用的正式标注。",
   },
   "filter-export": {
-    shortLabel: "过滤导出",
-    description: "去重、规则过滤，并拆出训练集、拒绝集和复核池。",
-    actionHint: "优先检查 rejected_samples 的损耗原因和 filtered_train 的纯度。",
+    shortLabel: "训练筛选",
+    description: "去重、规则过滤，并冻结内部标准训练集，同时生成审计导出。",
+    actionHint:
+      "优先检查 filtered_train 的纯度和边界，再看 rejected_samples 的损耗原因；train_export 主要用于审计导出格式，不是最终微调交付物。",
   },
   "review-export": {
     shortLabel: "复核导出",
@@ -348,9 +357,10 @@ export const PIPELINE_STAGE_META = {
     actionHint: "完成后优先看 eval_summary、confusion_analysis 和 eval_predictions。",
   },
   "student-export": {
-    shortLabel: "训练导出",
-    description: "把最终样本导出成 student 训练器真正消费的标准输入。",
-    actionHint: "确认格式和来源版本后再启动训练，不要直接拿中间产物去接训练器。",
+    shortLabel: "最终导出",
+    description: "把 canonical 训练集打包成最终可微调的 student 训练文件。",
+    actionHint:
+      "优先检查 student_train 与 training_metadata，确认 messages、system prompt、来源 canonical dataset 与样本量，再交给训练器。",
   },
 };
 

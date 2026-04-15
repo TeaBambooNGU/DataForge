@@ -1,6 +1,11 @@
 import React from "react";
 
-import { ARTIFACT_COPY, ARTIFACT_EXPLANATIONS, RAW_CANDIDATE_GROUP_OPTIONS } from "../../constants/app.js";
+import {
+  ARTIFACT_COPY,
+  ARTIFACT_EXPLANATIONS,
+  ARTIFACT_ROLE_BADGES,
+  RAW_CANDIDATE_GROUP_OPTIONS,
+} from "../../constants/app.js";
 import {
   getArtifactCategoryInfo,
   getArtifactListHint,
@@ -8,6 +13,21 @@ import {
 } from "../../lib/artifacts.js";
 import { classNames, formatBytes } from "../../lib/utils.js";
 import { ArtifactStructuredContent } from "./ArtifactStructuredViews.jsx";
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path
+        d="M10 3.75v7.4m0 0 2.8-2.8m-2.8 2.8-2.8-2.8M4.75 12.75v1a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.65"
+      />
+    </svg>
+  );
+}
 
 export default function ArtifactWorkspace({
   selectedRun,
@@ -28,6 +48,7 @@ export default function ArtifactWorkspace({
   artifactViewMode,
   setArtifactViewMode,
   artifactPayload,
+  artifactDownloadUrl,
   artifactSummary,
   artifactLoading,
   rawCandidateViewMode,
@@ -39,6 +60,9 @@ export default function ArtifactWorkspace({
   artifactPagination,
   setArtifactPage,
 }) {
+  const selectedArtifactBadge =
+    artifactPayload?.role_badge || (artifactPayload ? ARTIFACT_ROLE_BADGES[artifactPayload.key] : null);
+
   return (
     <div className="panel-grid artifact-layout">
       <section className="panel artifact-sidebar">
@@ -130,7 +154,9 @@ export default function ArtifactWorkspace({
                             <span className="artifact-nav-count">{items.length}</span>
                           </div>
                           <div className="artifact-nav-group-list">
-                            {items.map((artifact) => (
+                            {items.map((artifact) => {
+                              const artifactBadge = artifact.role_badge || ARTIFACT_ROLE_BADGES[artifact.key];
+                              return (
                               <button
                                 key={artifact.key}
                                 className={classNames("artifact-item", artifactKey === artifact.key && "is-active")}
@@ -139,7 +165,14 @@ export default function ArtifactWorkspace({
                                 onClick={() => setArtifactKey(artifact.key)}
                               >
                                 <div className="artifact-item-head">
-                                  <strong>{artifact.key}</strong>
+                                  <div className="artifact-item-title">
+                                    <strong>{artifact.key}</strong>
+                                    {artifactBadge ? (
+                                      <span className={classNames("micro-chip", artifactBadge.tone && `is-${artifactBadge.tone}`)}>
+                                        {artifactBadge.label}
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <span className="artifact-item-kind">{artifact.kind}</span>
                                 </div>
                                 <span className="artifact-item-role">
@@ -156,7 +189,8 @@ export default function ArtifactWorkspace({
                                   <span className="artifact-item-badge">{formatBytes(artifact.size_bytes)}</span>
                                 </div>
                               </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         </section>
                       );
@@ -187,45 +221,70 @@ export default function ArtifactWorkspace({
             <div className="artifact-preview-title">
               <span className="eyebrow">Artifact Preview</span>
               <h2>{artifactKey || "先选择一个 artifact"}</h2>
+              {selectedArtifactBadge ? (
+                <div className="artifact-preview-badges">
+                  <span className={classNames("micro-chip", selectedArtifactBadge.tone && `is-${selectedArtifactBadge.tone}`)}>
+                    {selectedArtifactBadge.label}
+                  </span>
+                </div>
+              ) : null}
             </div>
             <div className="section-inline-actions artifact-toolbar">
-              <input
-                className="search-input"
-                type="search"
-                value={artifactSearch}
-                onChange={(event) => setArtifactSearch(event.target.value)}
-                placeholder="搜索当前 artifact"
-                disabled={!artifactPayload || !Array.isArray(artifactPayload.content)}
-              />
-              <select
-                className="filter-select"
-                value={artifactFilter}
-                onChange={(event) => setArtifactFilter(event.target.value)}
-                disabled={!artifactPayload || artifactFilterOptions.length <= 1}
-              >
-                {artifactFilterOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <div className="segmented-control">
-                <button
-                  className={classNames("ghost-button", artifactViewMode === "structured" && "is-active")}
-                  type="button"
-                  aria-pressed={artifactViewMode === "structured"}
-                  onClick={() => setArtifactViewMode("structured")}
+              <div className="artifact-toolbar-row artifact-toolbar-row-primary">
+                <input
+                  className="search-input"
+                  type="search"
+                  value={artifactSearch}
+                  onChange={(event) => setArtifactSearch(event.target.value)}
+                  placeholder="搜索当前 artifact"
+                  disabled={!artifactPayload || !Array.isArray(artifactPayload.content)}
+                />
+                <select
+                  className="filter-select"
+                  value={artifactFilter}
+                  onChange={(event) => setArtifactFilter(event.target.value)}
+                  disabled={!artifactPayload || artifactFilterOptions.length <= 1}
                 >
-                  Structured
-                </button>
-                <button
-                  className={classNames("ghost-button", artifactViewMode === "raw" && "is-active")}
-                  type="button"
-                  aria-pressed={artifactViewMode === "raw"}
-                  onClick={() => setArtifactViewMode("raw")}
-                >
-                  Raw
-                </button>
+                  {artifactFilterOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="artifact-toolbar-row artifact-toolbar-row-secondary">
+                <div className="artifact-toolbar-trailing">
+                  <div className="segmented-control">
+                    <button
+                      className={classNames("ghost-button", artifactViewMode === "structured" && "is-active")}
+                      type="button"
+                      aria-pressed={artifactViewMode === "structured"}
+                      onClick={() => setArtifactViewMode("structured")}
+                    >
+                      Structured
+                    </button>
+                    <button
+                      className={classNames("ghost-button", artifactViewMode === "raw" && "is-active")}
+                      type="button"
+                      aria-pressed={artifactViewMode === "raw"}
+                      onClick={() => setArtifactViewMode("raw")}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                  {artifactDownloadUrl ? (
+                    <a
+                      className="artifact-download-button"
+                      href={artifactDownloadUrl}
+                      download
+                      aria-label="下载 Student Train 训练文件"
+                    >
+                      <span className="artifact-download-button__icon">
+                        <DownloadIcon />
+                      </span>
+                    </a>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>

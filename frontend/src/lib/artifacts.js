@@ -259,6 +259,91 @@ export function buildArtifactSummary(payload, records) {
       });
     }
   }
+  if (payload.key === "training_metadata") {
+    summary.push({
+      label: "sample_count",
+      value: payload.content?.sample_count || 0,
+      tone: "success",
+    });
+    summary.push({
+      label: "final_sft",
+      value: payload.content?.is_final_sft_dataset ? "yes" : "no",
+      tone: payload.content?.is_final_sft_dataset ? "success" : "warning",
+    });
+    summary.push({
+      label: "system_prompt",
+      value: payload.content?.has_system_prompt ? "yes" : "no",
+      tone: payload.content?.has_system_prompt ? "success" : "warning",
+    });
+  }
+  if (payload.key === "train_export_metadata") {
+    const leakage = payload.content?.historical_leakage || {};
+    summary.push({
+      label: "sample_count",
+      value: payload.content?.sample_count || 0,
+    });
+    summary.push({
+      label: "audit_export",
+      value: payload.content?.artifact_role === "audit_export" ? "yes" : "no",
+      tone: "warning",
+    });
+    summary.push({
+      label: "leakage_blocked",
+      value: leakage.blocked_count || 0,
+      tone: leakage.blocked_count ? "danger" : "success",
+    });
+  }
+  if (payload.key === "student_train") {
+    const uniqueActions = new Set();
+    let withSystem = 0;
+    let validJson = 0;
+    records.forEach((record) => {
+      const messages = Array.isArray(record?.messages) ? record.messages : [];
+      if (messages.some((message) => message?.role === "system")) {
+        withSystem += 1;
+      }
+      const assistantMessage = [...messages].reverse().find((message) => message?.role === "assistant");
+      if (!assistantMessage?.content) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(assistantMessage.content);
+        if (parsed?.action) {
+          validJson += 1;
+          uniqueActions.add(parsed.action);
+        }
+      } catch {}
+    });
+    summary.push({ label: "with_system", value: withSystem, tone: withSystem === records.length ? "success" : "warning" });
+    summary.push({ label: "valid_json", value: validJson, tone: validJson === records.length ? "success" : "warning" });
+    summary.push({ label: "unique_actions", value: uniqueActions.size });
+  }
+  if (payload.key === "train_export") {
+    const uniqueActions = new Set();
+    let withSystem = 0;
+    let validJson = 0;
+    records.forEach((record) => {
+      const messages = Array.isArray(record?.messages) ? record.messages : [];
+      if (messages.some((message) => message?.role === "system")) {
+        withSystem += 1;
+      }
+      const assistantMessage = [...messages].reverse().find((message) => message?.role === "assistant");
+      if (!assistantMessage?.content) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(assistantMessage.content);
+        if (parsed?.action) {
+          validJson += 1;
+          uniqueActions.add(parsed.action);
+        }
+      } catch {}
+    });
+    summary.push({ label: "audit_export", value: "yes", tone: "warning" });
+    summary.push({ label: "with_system", value: withSystem, tone: withSystem === records.length ? "success" : "warning" });
+    summary.push({ label: "valid_json", value: validJson, tone: validJson === records.length ? "success" : "warning" });
+    summary.push({ label: "unique_actions", value: uniqueActions.size });
+  }
   if (payload.key === "gold_eval") {
     summary.push({
       label: "hard",
@@ -287,7 +372,12 @@ export function buildArtifactSummary(payload, records) {
 }
 
 export function createDefaultArtifactKey(run) {
-  return visibleArtifacts(run).find((item) => item.exists)?.key || null;
+  const artifacts = visibleArtifacts(run);
+  return (
+    artifacts.find((item) => item.artifact_role === "final_sft_dataset")?.key ||
+    artifacts.find((item) => item.exists)?.key ||
+    null
+  );
 }
 
 export function visibleArtifacts(run) {

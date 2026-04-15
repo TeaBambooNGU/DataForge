@@ -79,9 +79,56 @@ def test_run_promptfoo_eval_uses_runner_and_reads_results(tmp_path: Path) -> Non
     )
 
     assert summary["status"] == "ok"
+    assert summary["exit_code"] == 0
     assert summary["summary"] == {"passRate": 1.0}
     assert summary["stdout"] == "promptfoo ok"
     assert summary["results_overview"]["pass_rate"] == 1.0
+
+
+def test_run_promptfoo_eval_accepts_exit_code_100_when_results_exist(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    results_path = tmp_path / "results.json"
+    config_path.write_text("description: test\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        write_json(
+            results_path,
+            {
+                "results": {
+                    "stats": {"successes": 7, "failures": 2},
+                    "results": [{"success": True}] * 7 + [{"success": False}] * 2,
+                }
+            },
+        )
+        raise subprocess.CalledProcessError(
+            100,
+            command,
+            output="completed with failures",
+            stderr="telemetry.shutdown() timed out during shutdown",
+        )
+
+    summary = run_promptfoo_eval(
+        ["promptfoo"],
+        config_path,
+        results_path,
+        cwd=tmp_path,
+        runner=fake_runner,
+    )
+
+    assert summary["status"] == "completed_with_failures"
+    assert summary["exit_code"] == 100
+    assert summary["summary"] == {
+        "passRate": 0.7778,
+        "totalTests": 9,
+        "passedTests": 7,
+        "failedTests": 2,
+    }
+    assert summary["results_overview"] == {
+        "pass_rate": 0.7778,
+        "total_tests": 9,
+        "passed_tests": 7,
+        "failed_tests": 2,
+    }
 
 
 def test_build_eval_result_produces_structured_summary() -> None:
@@ -148,4 +195,22 @@ def test_summarize_promptfoo_results_reads_summary_and_results() -> None:
         "total_tests": 4,
         "passed_tests": 3,
         "failed_tests": 1,
+    }
+
+
+def test_summarize_promptfoo_results_reads_nested_results_stats() -> None:
+    summary = summarize_promptfoo_results(
+        {
+            "results": {
+                "stats": {"successes": 7, "failures": 2},
+                "results": [{"success": True}] * 7 + [{"success": False}] * 2,
+            }
+        }
+    )
+
+    assert summary == {
+        "pass_rate": 0.7778,
+        "total_tests": 9,
+        "passed_tests": 7,
+        "failed_tests": 2,
     }

@@ -3,6 +3,8 @@ import React from "react";
 import { PIPELINE_STAGE_META, STAGE_ACTIONS } from "../../constants/app.js";
 import { classNames, formatDate } from "../../lib/utils.js";
 
+const RUN_ALL_STAGE_COMMANDS = ["generate", "classify", "filter-export", "review-export"];
+
 function buildChecklistItems(selectedRun, selectedRunCompletedStages, nextRecommendedCommand) {
   const orderedActions = STAGE_ACTIONS.filter((action) => action.command !== "run-all");
   return orderedActions.map((action) => {
@@ -45,6 +47,7 @@ export default function OverviewWorkspace({
   busyCommand,
   selectedRunCompletedStages,
   onRunCommand,
+  onOpenArtifact,
 }) {
   const checklistItems = buildChecklistItems(
     selectedRun,
@@ -54,7 +57,29 @@ export default function OverviewWorkspace({
   const checklistByCommand = Object.fromEntries(
     checklistItems.map((item) => [item.command, item])
   );
+  const runAllAction = STAGE_ACTIONS.find((action) => action.command === "run-all");
+  const runAllCoveredStages = RUN_ALL_STAGE_COMMANDS.map((command) =>
+    command === "generate" ? "generate" : command.replaceAll("-", "_")
+  );
+  const isRunAllComplete =
+    !!selectedRun?.run_id &&
+    runAllCoveredStages.every((stageKey) => selectedRunCompletedStages.has(stageKey));
+  const isRunAllBusy = busyCommand === "run-all";
+  const runAllDisabled = isRunAllBusy || isRunAllComplete;
+  const runAllStatusLabel = isRunAllBusy ? "执行中" : isRunAllComplete ? "已完成前四阶段" : "批量推进";
+  const runAllSummary = isRunAllComplete
+    ? "当前 run 已经过了 generate、classify、filter-export、review-export，不需要再执行批量推进。"
+    : "一键推进 generate -> classify -> filter-export -> review-export，适合新 run 快速走到人工复核入口。";
   const completedCount = Object.keys(selectedRun?.stages || {}).length;
+  const finalTrainingArtifact = (selectedRun?.artifacts || []).find(
+    (artifact) => artifact.exists && artifact.artifact_role === "final_sft_dataset"
+  );
+  const canonicalDatasetArtifact = (selectedRun?.artifacts || []).find(
+    (artifact) => artifact.exists && artifact.artifact_role === "canonical_dataset"
+  );
+  const currentSuggestionLabel = !selectedRun?.run_id
+    ? "先创建 Run"
+    : STAGE_ACTIONS.find((item) => item.command === nextRecommendedCommand)?.label || "查看当前产物";
 
   return (
     <div className="panel-grid">
@@ -77,13 +102,17 @@ export default function OverviewWorkspace({
           </article>
           <article className={classNames("summary-chip", nextRecommendedCommand && "is-warning")}>
             <span>当前建议</span>
-            <strong>
-              {STAGE_ACTIONS.find((item) => item.command === nextRecommendedCommand)?.label ||
-                "先创建 Run"}
-            </strong>
+            <strong>{currentSuggestionLabel}</strong>
           </article>
         </div>
-        {nextRecommendedCommand ? (
+        {!selectedRun?.run_id ? (
+          <div className="next-step-banner is-calm">
+            <div>
+              <strong>先创建一个 Run</strong>
+              <p>创建后才会有 artifacts、review pool 和后续诊断上下文。</p>
+            </div>
+          </div>
+        ) : nextRecommendedCommand ? (
           <div className="next-step-banner">
             <div>
               <strong>
@@ -105,16 +134,34 @@ export default function OverviewWorkspace({
         ) : (
           <div className="next-step-banner is-calm">
             <div>
-              <strong>先创建一个 Run</strong>
-              <p>创建后才会有 artifacts、review pool 和后续诊断上下文。</p>
+              <strong>当前 Run 已完成主流程</strong>
+              <p>当前 run 已具备完整上下文，建议直接查看产物、评测结果或最终训练文件。</p>
             </div>
-            <button className="primary-button" type="button" onClick={() => onRunCommand("generate")}>
-              创建 Run
-            </button>
           </div>
         )}
+        {runAllAction ? (
+          <div className={classNames("batch-action-card", runAllDisabled && "is-disabled")}>
+            <div className="batch-action-copy">
+              <div className="command-card-top">
+                <span>Batch Action</span>
+                <em className="command-card-state">{runAllStatusLabel}</em>
+              </div>
+              <strong>{runAllAction.label}</strong>
+              <p>{runAllAction.description}</p>
+              <small className="field-hint">{runAllSummary}</small>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={runAllDisabled}
+              onClick={() => onRunCommand(runAllAction.command)}
+            >
+              {isRunAllComplete ? "前四阶段已完成" : "一键推进到 Review Export"}
+            </button>
+          </div>
+        ) : null}
         <div className="command-grid pipeline-command-grid">
-          {STAGE_ACTIONS.map((action) => {
+          {STAGE_ACTIONS.filter((action) => action.command !== "run-all").map((action) => {
             const checklistItem = checklistByCommand[action.command];
             const stageKey = action.command.replaceAll("-", "_");
             const isComplete = selectedRunCompletedStages.has(stageKey);
@@ -194,6 +241,36 @@ export default function OverviewWorkspace({
             <strong>{Object.keys(selectedRun?.stages || {}).length}</strong>
           </div>
         </div>
+        {finalTrainingArtifact ? (
+          <div className="next-step-banner is-calm">
+            <div>
+              <strong>最终微调文件已就绪</strong>
+              <p>
+                {`当前 run 已产出 ${finalTrainingArtifact.key}。这是默认最终可直接微调的交付物；如需回看训练边界，可同时检查 ${
+                  canonicalDatasetArtifact?.key || "filtered_train"
+                }。`}
+              </p>
+            </div>
+            <div className="section-inline-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => onOpenArtifact(finalTrainingArtifact.key)}
+              >
+                打开最终训练文件
+              </button>
+              {canonicalDatasetArtifact ? (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => onOpenArtifact(canonicalDatasetArtifact.key)}
+                >
+                  查看 Canonical Dataset
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         <div className="config-bullet-list compact-list">
           <span>
             {selectedRun?.run_id

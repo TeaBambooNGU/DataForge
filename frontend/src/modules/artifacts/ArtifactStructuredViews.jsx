@@ -66,6 +66,32 @@ export function ArtifactRecordCard({ record, artifactKey }) {
     details.push(["tags", formatMetricValue("tags", record.tags || [])]);
     details.push(["raw_output", record.raw_output]);
     toneClass = matched && record.parse_ok ? "is-success" : "is-danger";
+  } else if (artifactKey === "student_train") {
+    const messages = Array.isArray(record.messages) ? record.messages : [];
+    const roles = messages.map((message) => message?.role || "unknown");
+    const userMessage = messages.find((message) => message?.role === "user");
+    const systemMessage = messages.find((message) => message?.role === "system");
+    const assistantMessage = [...messages].reverse().find((message) => message?.role === "assistant");
+    chips.push(systemMessage ? "has_system" : "no_system");
+    chips.push(`messages:${messages.length}`);
+    metrics.push(["roles", roles.join(" -> ") || "-"]);
+    metrics.push(["assistant_json", assistantMessage?.content || "-"]);
+    details.push(["user", userMessage?.content]);
+    details.push(["system", systemMessage?.content]);
+    toneClass = systemMessage ? "is-success" : "is-warning";
+  } else if (artifactKey === "train_export") {
+    const messages = Array.isArray(record.messages) ? record.messages : [];
+    const roles = messages.map((message) => message?.role || "unknown");
+    const userMessage = messages.find((message) => message?.role === "user");
+    const systemMessage = messages.find((message) => message?.role === "system");
+    const assistantMessage = [...messages].reverse().find((message) => message?.role === "assistant");
+    chips.push("audit_export");
+    chips.push(systemMessage ? "has_system" : "no_system");
+    metrics.push(["roles", roles.join(" -> ") || "-"]);
+    metrics.push(["assistant_json", assistantMessage?.content || "-"]);
+    details.push(["user", userMessage?.content]);
+    details.push(["system", systemMessage?.content]);
+    toneClass = "is-warning";
   } else {
     Object.entries(record)
       .slice(0, 4)
@@ -514,6 +540,383 @@ function EvalResultStructured({ content }) {
   );
 }
 
+function StudentTrainStructured({ records, totalRecords, mode = "final" }) {
+  const actionDistribution = new Map();
+  const rolePatternCounts = new Map();
+  const messageLengthCounts = new Map();
+  const systemPromptSet = new Set();
+  let systemMessageCount = 0;
+  let validAssistantJsonCount = 0;
+  let invalidAssistantJsonCount = 0;
+
+  records.forEach((record) => {
+    const messages = Array.isArray(record?.messages) ? record.messages : [];
+    const roles = messages.map((message) => message?.role || "unknown");
+    const pattern = roles.join(" -> ") || "empty";
+    rolePatternCounts.set(pattern, (rolePatternCounts.get(pattern) || 0) + 1);
+    messageLengthCounts.set(messages.length, (messageLengthCounts.get(messages.length) || 0) + 1);
+
+    const systemMessage = messages.find((message) => message?.role === "system");
+    if (systemMessage?.content) {
+      systemMessageCount += 1;
+      systemPromptSet.add(systemMessage.content);
+    }
+
+    const assistantMessage = [...messages].reverse().find((message) => message?.role === "assistant");
+    if (!assistantMessage?.content) {
+      invalidAssistantJsonCount += 1;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(assistantMessage.content);
+      if (parsed && typeof parsed.action === "string" && parsed.action.trim()) {
+        validAssistantJsonCount += 1;
+        const action = parsed.action.trim();
+        actionDistribution.set(action, (actionDistribution.get(action) || 0) + 1);
+      } else {
+        invalidAssistantJsonCount += 1;
+      }
+    } catch {
+      invalidAssistantJsonCount += 1;
+    }
+  });
+
+  const rolePatterns = Array.from(rolePatternCounts.entries()).sort((left, right) => right[1] - left[1]);
+  const messageLengths = Array.from(messageLengthCounts.entries()).sort((left, right) => Number(left[0]) - Number(right[0]));
+  const labelDistribution = Array.from(actionDistribution.entries()).sort((left, right) => right[1] - left[1]);
+  const previewRecords = records.slice(0, 6);
+  const isAuditMode = mode === "audit";
+
+  return (
+    <div className="artifact-object-stack">
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>{isAuditMode ? "Audit Position" : "Delivery Position"}</h3>
+          <span>
+            {isAuditMode
+              ? "这份文件用于审计与通用导出检查，不是默认最终微调交付物"
+              : "这份文件是默认最终可直接微调的正式交付物"}
+          </span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["artifact_mode", isAuditMode ? "audit_export" : "final_sft_dataset"],
+            ["preferred_upload_target", isAuditMode ? "student_train" : "this_file"],
+            ["same_message_shape", "yes"],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Training Readiness</h3>
+          <span>先确认这批样本是否满足直接微调需要的基本结构约束</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["visible_samples", records.length],
+            ["total_samples", totalRecords ?? records.length],
+            ["with_system", systemMessageCount],
+            ["valid_assistant_json", validAssistantJsonCount],
+            ["invalid_assistant_json", invalidAssistantJsonCount],
+            ["unique_system_prompts", systemPromptSet.size],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Message Template</h3>
+          <span>检查消息轮数与 role 排列是否稳定，避免训练模板混杂</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["dominant_role_pattern", rolePatterns[0]?.[0] || "-"],
+            ["dominant_role_pattern_count", rolePatterns[0]?.[1] || 0],
+            ["message_length_variants", messageLengths.length],
+            ["dominant_message_count", messageLengths[0]?.[0] || "-"],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="artifact-table-wrap">
+          <table className="artifact-table">
+            <thead>
+              <tr>
+                <th>Role Pattern</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rolePatterns.map(([pattern, count]) => (
+                <tr key={pattern}>
+                  <td>{pattern}</td>
+                  <td>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Label Distribution</h3>
+          <span>确认 assistant JSON 的 action 标签是否符合预期分布</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["unique_actions", labelDistribution.length],
+            ["top_action", labelDistribution[0]?.[0] || "-"],
+            ["top_action_count", labelDistribution[0]?.[1] || 0],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="artifact-table-wrap">
+          <table className="artifact-table">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {labelDistribution.map(([label, count]) => (
+                <tr key={label}>
+                  <td>{label}</td>
+                  <td>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Sample Preview</h3>
+          <span>快速抽查前几条样本，确认 messages 结构与输出 JSON 风格一致</span>
+        </div>
+        <div className="artifact-card-grid">
+          {previewRecords.map((record, index) => (
+            <ArtifactRecordCard
+              key={`student-train-preview-${index}`}
+              record={record}
+              artifactKey={isAuditMode ? "train_export" : "student_train"}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TrainExportMetadataStructured({ content }) {
+  const historicalLeakage = content?.historical_leakage || {};
+  const historicalSourceCounts = Object.entries(historicalLeakage.historical_source_counts || {});
+  const matchTypeCounts = Object.entries(historicalLeakage.match_type_counts || {});
+
+  return (
+    <div className="artifact-object-stack">
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Export Identity</h3>
+          <span>先确认这份文件是审计导出，不是最终微调交付物</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["dataset_name", content?.dataset_name],
+            ["artifact_role", content?.artifact_role],
+            ["is_final_sft_dataset", content?.is_final_sft_dataset],
+            ["format", content?.format],
+            ["sample_count", content?.sample_count],
+            ["version_id", content?.version_id],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Lineage</h3>
+          <span>看清 canonical dataset 与推荐训练交付物的对应关系</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["canonical_dataset_path", content?.canonical_dataset_path],
+            ["recommended_training_artifact", content?.recommended_training_artifact],
+            ["source_paths", content?.source_paths],
+            ["generated_at", content?.generated_at],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Leakage Guard</h3>
+          <span>确认跨 run 泄漏拦截是否生效，以及是否有历史样本被挡下</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["blocked_count", historicalLeakage.blocked_count],
+            ["indexed_source_count", Object.keys(historicalLeakage.indexed_source_counts || {}).length],
+            ["historical_source_count", historicalSourceCounts.length],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+        {matchTypeCounts.length ? (
+          <div className="artifact-table-wrap">
+            <table className="artifact-table">
+              <thead>
+                <tr>
+                  <th>Match Type</th>
+                  <th>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matchTypeCounts.map(([label, value]) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    <td>{formatMetricValue(label, value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
+      {content?.note ? (
+        <section className="artifact-object-block">
+          <div className="artifact-object-head">
+            <h3>Note</h3>
+            <span>使用边界与交付建议</span>
+          </div>
+          <div className="artifact-detail-grid">
+            <div className="artifact-detail-block artifact-detail-block-wide">
+              <strong>note</strong>
+              <span>{content.note}</span>
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function TrainingMetadataStructured({ content }) {
+  return (
+    <div className="artifact-object-stack">
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Delivery Identity</h3>
+          <span>先确认这份文件就是最终可直接微调的正式交付物</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["dataset_name", content?.dataset_name],
+            ["artifact_role", content?.artifact_role],
+            ["is_final_sft_dataset", content?.is_final_sft_dataset],
+            ["format", content?.format],
+            ["sample_count", content?.sample_count],
+            ["version_id", content?.version_id],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Training Readiness</h3>
+          <span>确认训练器真正关心的输入特征是否齐全</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["has_system_prompt", content?.has_system_prompt],
+            ["includes_hard_cases", content?.includes_hard_cases],
+            ["student_train_path", content?.student_train_path],
+            ["source_artifact", content?.source_artifact],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="artifact-object-block">
+        <div className="artifact-object-head">
+          <h3>Lineage</h3>
+          <span>看清这版最终训练文件是从哪个 canonical dataset 打包出来的</span>
+        </div>
+        <div className="artifact-key-grid">
+          {[
+            ["canonical_dataset_path", content?.canonical_dataset_path],
+            ["source_paths", content?.source_paths],
+            ["generated_at", content?.generated_at],
+            ["run_id", content?.run_id],
+          ].map(([label, value]) => (
+            <div key={label} className="artifact-key-card">
+              <strong>{label}</strong>
+              <span>{formatMetricValue(label, value)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {content?.note ? (
+        <section className="artifact-object-block">
+          <div className="artifact-object-head">
+            <h3>Note</h3>
+            <span>训练回流与治理约束</span>
+          </div>
+          <div className="artifact-detail-grid">
+            <div className="artifact-detail-block artifact-detail-block-wide">
+              <strong>note</strong>
+              <span>{content.note}</span>
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function GenericObjectStructured({ object, title }) {
   const entries = Object.entries(object || {});
   if (!entries.length) {
@@ -568,6 +971,24 @@ export function ArtifactStructuredContent({
   }
 
   if (artifactPayload.kind === "jsonl") {
+    if (artifactPayload.key === "student_train") {
+      return (
+        <StudentTrainStructured
+          records={visibleArtifactRows}
+          totalRecords={artifactPayload.total_records || visibleArtifactRows.length}
+          mode="final"
+        />
+      );
+    }
+    if (artifactPayload.key === "train_export") {
+      return (
+        <StudentTrainStructured
+          records={visibleArtifactRows}
+          totalRecords={artifactPayload.total_records || visibleArtifactRows.length}
+          mode="audit"
+        />
+      );
+    }
     if (artifactPayload.key === "raw_candidates") {
       return (
         <RawCandidatesStructured
@@ -613,6 +1034,12 @@ export function ArtifactStructuredContent({
     }
     if (artifactPayload.key === "eval_result") {
       return <EvalResultStructured content={artifactPayload.content} />;
+    }
+    if (artifactPayload.key === "train_export_metadata") {
+      return <TrainExportMetadataStructured content={artifactPayload.content} />;
+    }
+    if (artifactPayload.key === "training_metadata") {
+      return <TrainingMetadataStructured content={artifactPayload.content} />;
     }
     return <GenericObjectStructured object={artifactPayload.content} title={artifactPayload.key} />;
   }
