@@ -51,6 +51,25 @@ import OverviewWorkspace from "./modules/workspace/OverviewWorkspace.jsx";
 const STRUCTURED_ARTIFACT_PAGE_SIZE = 24;
 const RAW_ARTIFACT_LINE_PAGE_SIZE = 120;
 
+function getTaskConfigCardLabel(cardKey) {
+  if (cardKey === "task") {
+    return "Task Dossier";
+  }
+  if (cardKey === "rules-exports") {
+    return "Rules & Exports";
+  }
+  if (cardKey === "prompt-view") {
+    return "Prompt View";
+  }
+  if (cardKey === "scenarios") {
+    return "Scenario Cards";
+  }
+  if (cardKey.startsWith("runtime-")) {
+    return cardKey.replace("runtime-", "");
+  }
+  return "当前卡片";
+}
+
 function App() {
   const [tasks, setTasks] = useState([]);
   const [screen, setScreen] = useState("home");
@@ -90,13 +109,13 @@ function App() {
   const [busyCommand, setBusyCommand] = useState("");
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
-  const [savingTaskConfig, setSavingTaskConfig] = useState(false);
+  const [savingTaskConfigCard, setSavingTaskConfigCard] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [testingProvider, setTestingProvider] = useState("");
   const [llmTests, setLlmTests] = useState({});
   const [promptFocus, setPromptFocus] = useState("generator");
   const [isEditingTaskConfig, setIsEditingTaskConfig] = useState(false);
-  const [configViewMode, setConfigViewMode] = useState("visual");
+  const [editingTaskConfigCard, setEditingTaskConfigCard] = useState("");
   const [runtimeCustomModes, setRuntimeCustomModes] = useState({});
   const [expandedRuntimeStages, setExpandedRuntimeStages] = useState({
     generator: false,
@@ -656,11 +675,64 @@ function App() {
     }
   }
 
-  async function handleSaveTaskConfig() {
+  function revertTaskConfigCard(cardKey) {
+    if (!taskConfigBaseline) {
+      return;
+    }
+    setTaskConfigDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      if (cardKey === "task") {
+        return { ...current, task: deepClone(taskConfigBaseline.task) };
+      }
+      if (cardKey === "rules-exports") {
+        return {
+          ...current,
+          rulesText: taskConfigBaseline.rulesText,
+          exportsText: taskConfigBaseline.exportsText,
+          labelsText: taskConfigBaseline.labelsText,
+        };
+      }
+      if (cardKey === "prompt-view") {
+        return {
+          ...current,
+          generatorPrompt: taskConfigBaseline.generatorPrompt,
+          teacherPrompt: taskConfigBaseline.teacherPrompt,
+        };
+      }
+      if (cardKey === "scenarios") {
+        return {
+          ...current,
+          scenariosText: taskConfigBaseline.scenariosText,
+        };
+      }
+      if (cardKey.startsWith("runtime-")) {
+        const stage = cardKey.replace("runtime-", "");
+        const currentRuntime = safeParseJson(current.runtimeText || "{}", {});
+        const baselineRuntime = safeParseJson(taskConfigBaseline.runtimeText || "{}", {});
+        return {
+          ...current,
+          runtimeText: JSON.stringify(
+            {
+              ...currentRuntime,
+              [stage]: deepClone(baselineRuntime?.[stage] || {}),
+            },
+            null,
+            2
+          ),
+        };
+      }
+      return deepClone(taskConfigBaseline);
+    });
+    setFlashMessage(`${getTaskConfigCardLabel(cardKey)} 已回退`, "warning");
+  }
+
+  async function handleSaveTaskConfig(cardKey = "task") {
     if (!activeTask?.name || !taskConfigDraft) {
       return;
     }
-    setSavingTaskConfig(true);
+    setSavingTaskConfigCard(cardKey);
     try {
       const payload = buildTaskConfigPayloadFromDraft(taskConfigDraft);
       const response = await api(`/api/tasks/${activeTask.name}/config-files`, {
@@ -672,13 +744,13 @@ function App() {
       setTaskSpec(response.spec);
       setTaskConfigDraft(nextDraft);
       setTaskConfigBaseline(nextDraft);
-      setIsEditingTaskConfig(false);
+      setEditingTaskConfigCard("");
       await loadBoot();
-      setFlashMessage("Task 配置已保存", "success");
+      setFlashMessage(`${getTaskConfigCardLabel(cardKey)} 已保存`, "success");
     } catch (error) {
       setFlashMessage(error.message, "error");
     } finally {
-      setSavingTaskConfig(false);
+      setSavingTaskConfigCard("");
     }
   }
 
@@ -1318,14 +1390,15 @@ function App() {
                   taskConfigDraft={taskConfigDraft}
                   isEditingTaskConfig={isEditingTaskConfig}
                   setIsEditingTaskConfig={setIsEditingTaskConfig}
-                  configViewMode={configViewMode}
-                  setConfigViewMode={setConfigViewMode}
+                  editingTaskConfigCard={editingTaskConfigCard}
+                  setEditingTaskConfigCard={setEditingTaskConfigCard}
                   taskConfigBaseline={taskConfigBaseline}
                   setTaskConfigDraft={setTaskConfigDraft}
                   setPromptFocus={setPromptFocus}
                   setFlashMessage={setFlashMessage}
-                  savingTaskConfig={savingTaskConfig}
+                  savingTaskConfigCard={savingTaskConfigCard}
                   onSaveTaskConfig={handleSaveTaskConfig}
+                  onRevertTaskConfigCard={revertTaskConfigCard}
                   configSummaryCards={configSummaryCards}
                   taskConfigDirty={taskConfigDirty}
                   configAdvice={configAdvice}
