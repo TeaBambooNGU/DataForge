@@ -1,15 +1,21 @@
 from __future__ import annotations
 from pathlib import Path
 
-from dataforge.core.io import read_jsonl, write_jsonl, write_run_manifest
+from dataforge.core.io import write_run_manifest
 from dataforge.core.registry import TaskRun
 from dataforge.core.schemas import validate_samples
+from dataforge.core.storage import load_artifact_records, save_artifact_records
 from dataforge.providers import get_teacher_provider
 
 
 def run(task: TaskRun, *, input_path: Path | None = None, output_path: Path | None = None) -> Path:
     source = input_path or task.path_for("raw_candidates")
-    samples = read_jsonl(source)
+    samples = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="raw_candidates",
+    )
     classified = []
     parse_failures = 0
     provider = get_teacher_provider(task.runtime.get("teacher", {}).get("provider", "mock"))
@@ -36,7 +42,14 @@ def run(task: TaskRun, *, input_path: Path | None = None, output_path: Path | No
 
     validate_samples(classified)
     target = output_path or task.path_for("teacher_labeled")
-    write_jsonl(target, classified)
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="teacher_labeled",
+        records=classified,
+    )
     manifest_path = task.path_for("classify_manifest")
     manifest = write_run_manifest(
         manifest_path,

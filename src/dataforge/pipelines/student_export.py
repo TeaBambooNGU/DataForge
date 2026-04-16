@@ -3,14 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from dataforge.core.exporters import export_train_dataset
-from dataforge.core.io import read_jsonl, write_json, write_run_manifest
+from dataforge.core.io import write_run_manifest
 from dataforge.core.registry import TaskRun
+from dataforge.core.storage import load_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 
 
 def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
     source = input_path or task.path_for("filtered_train")
-    samples = read_jsonl(source)
+    samples = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="filtered_train",
+    )
     student_train_path = task.path_for("student_train")
     training_metadata_path = task.path_for("training_metadata")
     student_format = task.exports.get("student_format") or task.exports.get("train_format") or "chatml_jsonl"
@@ -32,14 +38,21 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
             "artifact_role": "final_sft_dataset",
             "is_final_sft_dataset": True,
             "canonical_dataset_path": str(source),
-            "source_artifact": str(source),
+            "source_artifact": "filtered_train",
             "student_train_path": str(student_train_path),
             "has_system_prompt": bool((system_prompt or "").strip()),
             "includes_hard_cases": False,
             "note": "hard_cases 默认不回流训练；如需回流，必须产出新的训练版本并单独记录原因。",
         },
     )
-    write_json(training_metadata_path, training_metadata)
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="training_metadata",
+        payload=training_metadata,
+    )
 
     manifest_path = task.path_for("student_export_manifest")
     manifest = write_run_manifest(

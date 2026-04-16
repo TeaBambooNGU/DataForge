@@ -1,3 +1,4 @@
 [console_scripts]
 dataforge = dataforge.cli:main
+dataforge-migrate-sqlite = dataforge.scripts.migrate_runs_to_sqlite:main
 dataforge-web = dataforge.web.app:main

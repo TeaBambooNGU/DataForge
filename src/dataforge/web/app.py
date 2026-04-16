@@ -42,6 +42,17 @@ from dataforge.core.runtime_catalog import (
     save_custom_runtime_providers,
     save_runtime_provider_model_overrides,
 )
+from dataforge.core.storage import (
+    delete_run as delete_run_from_storage,
+    get_artifact_info,
+    load_artifact_records,
+    load_blob_artifact,
+    load_review_records as load_review_records_from_storage,
+    latest_run as latest_run_from_storage,
+    list_run_stages,
+    list_runs,
+    save_review_records,
+)
 from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, filter_export, generate, review_export, student_export, validate_review
 from dataforge.providers.anthropic_compatible import AnthropicCompatibleClient, AnthropicCompatibleError
 from dataforge.providers.openai_compatible import OpenAICompatibleChatClient, OpenAICompatibleError
@@ -62,6 +73,24 @@ SUPPORTED_COMMANDS = set(COMMAND_HANDLERS) | {"run-all"}
 CUSTOM_PROVIDER_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 ENV_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 CUSTOM_PROVIDER_IMPLEMENTATIONS = tuple(name for name in BUILTIN_RUNTIME_PROVIDER_CATALOG if name != "mock")
+DB_RECORD_ARTIFACT_KEYS = {
+    "raw_candidates",
+    "teacher_labeled",
+    "filtered_train",
+    "rejected_samples",
+    "review_candidates",
+    "gold_eval",
+    "hard_cases",
+    "eval_predictions",
+}
+DB_BLOB_ARTIFACT_KEYS = {
+    "labelstudio_import",
+    "train_export_metadata",
+    "eval_export_metadata",
+    "training_metadata",
+    "eval_result",
+    "hard_cases_metadata",
+}
 
 
 class CommandRequest(BaseModel):
@@ -704,12 +733,30 @@ def _probe_llm_connection(provider_name: str, runtime: dict[str, Any], *, projec
 
 
 def _load_runs_index(task: TaskConfig) -> list[dict[str, Any]]:
-    index_path = task.task_root / "runs" / "index.json"
-    if not index_path.exists():
-        return []
-    index = read_json(index_path)
-    runs = index.get("runs", [])
-    return sorted(runs, key=lambda item: item.get("created_at", ""), reverse=True)
+    runs = []
+    for row in list_runs(task.project_root, task_name=task.name):
+        stages = list_run_stages(task.project_root, task_name=task.name, run_id=row["run_id"])
+        runs.append(
+            {
+                "run_id": row["run_id"],
+                "task_name": task.name,
+                "run_root": str((task.task_root / "runs" / row["run_id"]).resolve()),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "status": row["status"],
+                "last_stage": row["last_stage"],
+                "stages": {
+                    stage_name: {
+                        "manifest_path": stage_payload["manifest"].get("manifest_path"),
+                        "completed_at": stage_payload["completed_at"],
+                        "stats": stage_payload["stats"],
+                        "summary": stage_payload["summary"],
+                    }
+                    for stage_name, stage_payload in stages.items()
+                },
+            }
+        )
+    return runs
 
 
 def _find_run_entry(task: TaskConfig, run_id: str) -> dict[str, Any]:
@@ -719,48 +766,18 @@ def _find_run_entry(task: TaskConfig, run_id: str) -> dict[str, Any]:
     raise _http_404(f"Run not found: {run_id}")
 
 
-def _write_runs_index(task: TaskConfig, runs: list[dict[str, Any]]) -> None:
-    index_path = task.task_root / "runs" / "index.json"
-    sorted_runs = sorted(runs, key=lambda item: item.get("created_at", ""), reverse=True)
-    write_json(index_path, {"runs": sorted_runs})
-
-
-def _sync_latest_run_pointer(task: TaskConfig, runs: list[dict[str, Any]]) -> None:
-    latest_path = task.task_root / "runs" / "latest.json"
-    if not runs:
-        if latest_path.exists():
-            latest_path.unlink()
-        return
-
-    latest_entry = sorted(runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
-    write_json(
-        latest_path,
-        {
-            "run_id": latest_entry["run_id"],
-            "status": latest_entry.get("status"),
-            "updated_at": utc_now(),
-        },
-    )
-
-
 def _delete_run(task: TaskConfig, run_id: str) -> list[dict[str, Any]]:
-    index_path = task.task_root / "runs" / "index.json"
-    if not index_path.exists():
+    runs = _load_runs_index(task)
+    if not any(entry.get("run_id") == run_id for entry in runs):
         raise _http_404(f"Run not found: {run_id}")
-
-    index = read_json(index_path)
-    runs = index.get("runs", [])
-    remaining_runs = [entry for entry in runs if entry.get("run_id") != run_id]
-    if len(remaining_runs) == len(runs):
-        raise _http_404(f"Run not found: {run_id}")
-
+    try:
+        delete_run_from_storage(task.project_root, task_name=task.name, run_id=run_id)
+    except FileNotFoundError as exc:
+        raise _http_404(str(exc)) from exc
     run_root = task.task_root / "runs" / run_id
     if run_root.exists():
         shutil.rmtree(run_root)
-
-    _write_runs_index(task, remaining_runs)
-    _sync_latest_run_pointer(task, remaining_runs)
-    return sorted(remaining_runs, key=lambda item: item.get("created_at", ""), reverse=True)
+    return _load_runs_index(task)
 
 
 def _delete_task(task: TaskConfig) -> list[str]:
@@ -810,17 +827,37 @@ def _artifact_role_meta(artifact_key: str) -> dict[str, Any]:
     return mapping.get(artifact_key, {"artifact_role": "general", "role_badge": None})
 
 
+def _artifact_kind_for_key(path: Path, artifact_key: str) -> str:
+    if artifact_key in DB_RECORD_ARTIFACT_KEYS or artifact_key == "review_results":
+        return "jsonl"
+    if artifact_key in DB_BLOB_ARTIFACT_KEYS:
+        return "json"
+    return _artifact_kind(path)
+
+
 def _serialize_artifact_meta(run: TaskRun, artifact_key: str, relative_path: str) -> dict[str, Any]:
     path = run.path_for(artifact_key)
-    exists = path.exists()
+    path_exists = path.exists()
+    db_info = get_artifact_info(
+        run.project_root,
+        task_name=run.name,
+        run_id=run.run_id,
+        artifact_key=artifact_key,
+    )
+    db_exists = db_info is not None or (artifact_key == "review_results" and bool(load_review_records_from_storage(
+        run.project_root,
+        task_name=run.name,
+        run_id=run.run_id,
+    )))
+    exists = path_exists or db_exists
     return {
         "key": artifact_key,
         "relative_path": relative_path,
         "absolute_path": str(path),
         "category": relative_path.split("/", 1)[0],
-        "kind": _artifact_kind(path),
+        "kind": _artifact_kind_for_key(path, artifact_key),
         "exists": exists,
-        "size_bytes": path.stat().st_size if exists else 0,
+        "size_bytes": path.stat().st_size if path_exists else 0,
         **_artifact_role_meta(artifact_key),
     }
 
@@ -1145,11 +1182,18 @@ def _save_task_config_files(task: TaskConfig, normalized: dict[str, Any]) -> Non
 def _load_review_records(run: TaskRun) -> tuple[str, Path, list[dict[str, Any]]]:
     review_results_path = run.path_for("review_results")
     review_candidates_path = run.path_for("review_candidates")
+    review_results = load_review_records_from_storage(run.project_root, task_name=run.name, run_id=run.run_id)
 
-    if review_results_path.exists():
-        return "review_results", review_results_path, read_jsonl(review_results_path)
-    if review_candidates_path.exists():
-        return "review_candidates", review_candidates_path, read_jsonl(review_candidates_path)
+    if review_results:
+        return "review_results", review_results_path, review_results
+    review_candidates = load_artifact_records(
+        run.project_root,
+        task_name=run.name,
+        run_id=run.run_id,
+        artifact_key="review_candidates",
+    )
+    if review_candidates:
+        return "review_candidates", review_candidates_path, review_candidates
     return "missing", review_candidates_path, []
 
 
@@ -1169,7 +1213,13 @@ def _save_review_records(run: TaskRun, records: list[dict[str, Any]], reviewer: 
 
     validate_review_records(normalized)
     target = run.path_for("review_results")
-    write_jsonl(target, normalized)
+    save_review_records(
+        run.project_root,
+        task_name=run.name,
+        task_root=run.task_root,
+        run_id=run.run_id,
+        records=normalized,
+    )
     return target
 
 
@@ -1374,6 +1424,49 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         run = TaskRun(task=task, run_id=run_id)
         path = run.path_for(artifact_key)
         payload = _serialize_artifact_meta(run, artifact_key, RUN_ARTIFACT_PATHS[artifact_key])
+        db_info = get_artifact_info(
+            resolved_root,
+            task_name=task_name,
+            run_id=run_id,
+            artifact_key=artifact_key,
+        )
+        if artifact_key == "review_results":
+            records = load_review_records_from_storage(resolved_root, task_name=task_name, run_id=run_id)
+            if records or get_artifact_info(resolved_root, task_name=task_name, run_id=run_id, artifact_key=artifact_key):
+                return {
+                    **payload,
+                    "content": records[:limit],
+                    "total_records": len(records),
+                    "truncated": len(records) > limit,
+                }
+        elif db_info is not None and artifact_key in DB_RECORD_ARTIFACT_KEYS:
+            records = load_artifact_records(
+                resolved_root,
+                task_name=task_name,
+                run_id=run_id,
+                artifact_key=artifact_key,
+            )
+            return {
+                **payload,
+                "content": records[:limit],
+                "total_records": db_info["record_count"],
+                "truncated": len(records) > limit,
+            }
+        elif db_info is not None and artifact_key in DB_BLOB_ARTIFACT_KEYS:
+            return {
+                **payload,
+                "content": load_blob_artifact(
+                    resolved_root,
+                    task_name=task_name,
+                    run_id=run_id,
+                    artifact_key=artifact_key,
+                ),
+                "truncated": False,
+            }
+
+        if artifact_key in DB_RECORD_ARTIFACT_KEYS or artifact_key in DB_BLOB_ARTIFACT_KEYS or artifact_key == "review_results":
+            return {**payload, "content": None, "truncated": False}
+
         if not path.exists():
             return {**payload, "content": None, "truncated": False}
 
@@ -1439,7 +1532,7 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise _http_400(str(exc)) from exc
 
-        records = read_jsonl(target)
+        records = load_review_records_from_storage(resolved_root, task_name=task_name, run_id=run_id)
         return {
             "ok": True,
             "path": str(target),

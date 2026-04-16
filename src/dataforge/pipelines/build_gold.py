@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dataforge.core.io import read_jsonl, write_json, write_jsonl, write_run_manifest
+from dataforge.core.io import write_run_manifest
 from dataforge.core.registry import TaskRun
 from dataforge.core.review import group_review_records, merge_review_records, validate_review_records
 from dataforge.core.schemas import validate_samples
+from dataforge.core.storage import load_artifact_records, load_review_records, save_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 
 
 def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, Path]:
     source = review_results_path or task.path_for("review_results")
-    review_records = read_jsonl(source)
+    review_records = load_review_records(task.project_root, task_name=task.name, run_id=task.run_id)
     validate_review_records(review_records)
-    classified_samples = read_jsonl(task.path_for("teacher_labeled"))
+    classified_samples = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="teacher_labeled",
+    )
     sample_map = {sample["id"]: sample for sample in classified_samples}
     gold_samples = []
     hard_cases = []
@@ -65,8 +71,22 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
     gold_path = task.path_for("gold_eval")
     hard_cases_path = task.path_for("hard_cases")
     hard_cases_metadata_path = task.path_for("hard_cases_metadata")
-    write_jsonl(gold_path, gold_samples)
-    write_jsonl(hard_cases_path, hard_cases)
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="gold_eval",
+        records=gold_samples,
+    )
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="hard_cases",
+        records=hard_cases,
+    )
     hard_cases_version = build_dataset_version_summary(
         task_name=task.name,
         run_id=task.run_id,
@@ -92,7 +112,14 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
             },
         },
     )
-    write_json(hard_cases_metadata_path, hard_cases_version)
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="hard_cases_metadata",
+        payload=hard_cases_version,
+    )
     manifest_path = task.path_for("build_gold_manifest")
     manifest = write_run_manifest(
         manifest_path,

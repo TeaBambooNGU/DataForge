@@ -1,18 +1,23 @@
 from pathlib import Path
 
 from dataforge.core.dedupe import exclude_historical_leakage
-from dataforge.core.io import write_jsonl
 from dataforge.core.registry import create_task_run, load_task_config
+from dataforge.core.storage import save_artifact_records
 
 
 def test_exclude_historical_leakage_blocks_overlap_from_previous_assets(tmp_path: Path) -> None:
     task = load_task_config(Path("."), "report-intent-distill")
+    task.project_root = tmp_path
     task.task_root = tmp_path / "report-intent-distill"
 
     previous_run = create_task_run(task, "run-prev-001")
-    write_jsonl(
-        previous_run.path_for("gold_eval"),
-        [
+    save_artifact_records(
+        tmp_path,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=previous_run.run_id,
+        artifact_key="gold_eval",
+        records=[
             {
                 "id": "sample-1",
                 "task_name": task.name,

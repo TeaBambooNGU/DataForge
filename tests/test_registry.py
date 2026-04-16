@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from dataforge.core.io import read_json
 from dataforge.core.registry import create_task_run, discover_tasks, latest_run_id, load_task_config, require_entry_status
+from dataforge.core.storage import get_run, list_run_stages
 
 
 def test_discover_tasks() -> None:
@@ -17,17 +17,19 @@ def test_load_task_config_resolves_paths() -> None:
     assert task.path_for("labels").name == "labels.yaml"
 
 
-def test_create_task_run_updates_latest_index(tmp_path: Path) -> None:
+def test_create_task_run_updates_latest_status(tmp_path: Path) -> None:
     task = load_task_config(Path("."), "report-intent-distill")
+    task.project_root = tmp_path
     task.task_root = tmp_path / "report-intent-distill"
     run = create_task_run(task, "run-test-001")
     assert run.path_for("raw_candidates") == (task.task_root / "runs" / "run-test-001" / "raw" / "raw_candidates.jsonl").resolve()
     assert latest_run_id(task) == "run-test-001"
-    assert read_json(task.task_root / "runs" / "latest.json")["status"] == "created"
+    assert get_run(tmp_path, task_name=task.name, run_id=run.run_id)["status"] == "created"
 
 
 def test_run_status_only_moves_forward(tmp_path: Path) -> None:
     task = load_task_config(Path("."), "report-intent-distill")
+    task.project_root = tmp_path
     task.task_root = tmp_path / "report-intent-distill"
     run = create_task_run(task, "run-test-002")
     run.record_stage("eval", {"completed_at": "2026-03-28T00:00:00+00:00", "stats": {}}, run.path_for("eval_manifest"))
@@ -36,11 +38,10 @@ def test_run_status_only_moves_forward(tmp_path: Path) -> None:
         {"completed_at": "2026-03-28T00:01:00+00:00", "stats": {}},
         run.path_for("review_validate_manifest"),
     )
-    latest = read_json(task.task_root / "runs" / "latest.json")
-    index = read_json(task.task_root / "runs" / "index.json")
-    assert latest["status"] == "evaluated"
-    assert index["runs"][0]["status"] == "evaluated"
-    assert index["runs"][0]["last_stage"] == "validate_review"
+    run_row = get_run(tmp_path, task_name=task.name, run_id=run.run_id)
+    assert run_row["status"] == "evaluated"
+    assert run_row["last_stage"] == "validate_review"
+    assert set(list_run_stages(tmp_path, task_name=task.name, run_id=run.run_id)) == {"eval", "validate_review"}
 
 
 def test_require_entry_status_rejects_legacy_run_entry() -> None:

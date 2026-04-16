@@ -11,6 +11,15 @@ from dataforge.core.registry import (
     load_task_config,
     resolve_task_run,
 )
+from dataforge.core.storage import (
+    get_run,
+    list_run_stages,
+    list_runs,
+    load_artifact_records,
+    load_review_records,
+    save_artifact_records,
+    save_blob_artifact,
+)
 from dataforge.core.runtime_catalog import save_custom_runtime_providers
 from dataforge.web.app import (
     GlobalLLMSettingsPayload,
@@ -19,9 +28,11 @@ from dataforge.web.app import (
     _delete_task,
     _build_runtime_catalog,
     _ensure_command_is_runnable,
+    _load_review_records,
     _normalize_task_create_payload,
     _probe_llm_connection,
     _resolve_global_llm_runtime,
+    _save_review_records,
     _save_global_llm_settings,
     _serialize_global_llm_settings,
     _serialize_run,
@@ -80,6 +91,7 @@ def test_student_train_download_endpoint_returns_file(tmp_path: Path) -> None:
 
 def test_serialize_run_exposes_eval_summary(tmp_path: Path) -> None:
     task = load_task_config(Path("."), "report-intent-distill")
+    task.project_root = tmp_path
     task.task_root = tmp_path / "report-intent-distill"
     run = create_task_run(task, "run-web-001")
     manifest = {
@@ -93,8 +105,22 @@ def test_serialize_run_exposes_eval_summary(tmp_path: Path) -> None:
         },
     }
     run.record_stage("eval", manifest, run.path_for("eval_manifest"))
-    index_payload = read_json(run.index_path)
-    entry = index_payload["runs"][0]
+    entry = {
+        "run_id": run.run_id,
+        "status": get_run(tmp_path, task_name=task.name, run_id=run.run_id)["status"],
+        "created_at": get_run(tmp_path, task_name=task.name, run_id=run.run_id)["created_at"],
+        "updated_at": get_run(tmp_path, task_name=task.name, run_id=run.run_id)["updated_at"],
+        "last_stage": get_run(tmp_path, task_name=task.name, run_id=run.run_id)["last_stage"],
+        "stages": {
+            name: {
+                "manifest_path": stage["manifest"].get("manifest_path"),
+                "completed_at": stage["completed_at"],
+                "stats": stage["stats"],
+                "summary": stage["summary"],
+            }
+            for name, stage in list_run_stages(tmp_path, task_name=task.name, run_id=run.run_id).items()
+        },
+    }
 
     serialized = _serialize_run(task, entry)
 
@@ -136,8 +162,111 @@ def test_run_command_allows_new_run_commands_after_previous_runs(tmp_path: Path,
         assert next_run.run_id.startswith("run-")
         assert next_run.run_id != existing_run.run_id
 
-    index = read_json(project_root / "tasks" / "report-intent-distill" / "runs" / "index.json")
-    assert len(index["runs"]) == 3
+    assert len(list_runs(project_root, task_name=task.name)) == 3
+
+
+def test_review_records_helpers_persist_to_storage(tmp_path: Path) -> None:
+    project_root = _create_test_project(tmp_path)
+    task = load_task_config(project_root, "report-intent-distill")
+    run = create_task_run(task, "run-review-001")
+    review_candidates = [
+        {
+            "sample_id": "sample-1",
+            "task_name": task.name,
+            "user_text": "帮我改一下",
+            "teacher_label": "rewrite_report",
+            "review_decision": "pending",
+            "reviewer_label": None,
+            "review_comment": "",
+            "reviewed_by": None,
+            "reviewed_at": None,
+            "context": {},
+            "tags": [],
+        }
+    ]
+    save_artifact_records(
+        project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=run.run_id,
+        artifact_key="review_candidates",
+        records=review_candidates,
+    )
+
+    source, path, records = _load_review_records(run)
+    assert source == "review_candidates"
+    assert path == run.path_for("review_candidates")
+    assert records == review_candidates
+
+    target = _save_review_records(
+        run,
+        [
+            {
+                **review_candidates[0],
+                "review_decision": "accepted",
+            }
+        ],
+        "alice",
+    )
+    assert target == run.path_for("review_results")
+    stored = load_review_records(project_root, task_name=task.name, run_id=run.run_id)
+    assert stored[0]["reviewed_by"] == "alice"
+
+    source, _, records = _load_review_records(run)
+    assert source == "review_results"
+    assert records[0]["review_decision"] == "accepted"
+
+
+def test_artifact_endpoint_reads_records_from_sqlite_without_file(tmp_path: Path) -> None:
+    project_root = _create_test_project(tmp_path)
+    task = load_task_config(project_root, "report-intent-distill")
+    run = create_task_run(task, "run-artifact-db-001")
+    save_artifact_records(
+        project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=run.run_id,
+        artifact_key="raw_candidates",
+        records=[{"id": "sample-1", "input": {"user_text": "你好"}}],
+    )
+
+    app = create_app(project_root)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", "") == "/api/tasks/{task_name}/runs/{run_id}/artifacts/{artifact_key}"
+    )
+    payload = endpoint(task.name, run.run_id, "raw_candidates", 200)
+
+    assert payload["kind"] == "jsonl"
+    assert payload["total_records"] == 1
+    assert payload["content"][0]["id"] == "sample-1"
+    assert load_artifact_records(project_root, task_name=task.name, run_id=run.run_id, artifact_key="raw_candidates")[0]["id"] == "sample-1"
+
+
+def test_artifact_endpoint_reads_blob_from_sqlite_without_file(tmp_path: Path) -> None:
+    project_root = _create_test_project(tmp_path)
+    task = load_task_config(project_root, "report-intent-distill")
+    run = create_task_run(task, "run-artifact-db-002")
+    save_blob_artifact(
+        project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=run.run_id,
+        artifact_key="eval_result",
+        payload={"metrics": {"overall_accuracy": 1.0}},
+    )
+
+    app = create_app(project_root)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", "") == "/api/tasks/{task_name}/runs/{run_id}/artifacts/{artifact_key}"
+    )
+    payload = endpoint(task.name, run.run_id, "eval_result", 200)
+
+    assert payload["kind"] == "json"
+    assert payload["content"]["metrics"]["overall_accuracy"] == 1.0
 
 
 def test_create_task_payload_uses_defaults_and_scaffold_is_discoverable(tmp_path: Path) -> None:

@@ -13,16 +13,27 @@ from dataforge.core.eval_runner import (
     write_eval_reports,
 )
 from dataforge.core.exporters import export_eval_dataset
-from dataforge.core.io import read_jsonl, write_json, write_run_manifest
+from dataforge.core.io import write_run_manifest
 from dataforge.core.registry import TaskRun
+from dataforge.core.storage import load_artifact_records, save_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 from dataforge.providers import get_eval_provider
 
 
 def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
     gold_source = gold_path or task.path_for("gold_eval")
-    gold_samples = read_jsonl(gold_source)
-    hard_cases = read_jsonl(task.path_for("hard_cases"))
+    gold_samples = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="gold_eval",
+    )
+    hard_cases = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="hard_cases",
+    )
     eval_provider = get_eval_provider(task.runtime.get("eval", {}).get("provider", "mock"))
     eval_rows = []
     for sample in gold_samples:
@@ -86,8 +97,30 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
         extra={"hard_case_sample_count": len(hard_cases)},
     )
     eval_result["version"] = eval_version_summary
-    write_json(eval_export_metadata_path, eval_version_summary)
-    write_json(eval_result_path, eval_result)
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="eval_predictions",
+        records=eval_rows,
+    )
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="eval_export_metadata",
+        payload=eval_version_summary,
+    )
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="eval_result",
+        payload=eval_result,
+    )
     write_eval_reports(
         summary_path,
         confusion_path,

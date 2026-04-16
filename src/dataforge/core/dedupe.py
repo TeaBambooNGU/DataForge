@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from dataforge.core.io import read_json, read_jsonl
+from dataforge.core.storage import list_runs, load_artifact_records
 
 
 def _content_key(*, text: str, has_visible_report: bool | None, label: str | None) -> tuple[str, bool | None, str | None]:
@@ -54,14 +54,6 @@ def dedupe_samples(samples: list[dict]) -> list[dict]:
 
 
 def exclude_historical_leakage(task, samples: list[dict[str, Any]]) -> HistoricalLeakageResult:
-    if not task.index_path.exists():
-        return HistoricalLeakageResult(
-            kept=samples,
-            blocked=[],
-            summary={"blocked_count": 0, "source_counts": {}, "match_type_counts": {}},
-        )
-
-    index = read_json(task.index_path)
     historical_ids: dict[str, set[str]] = {}
     historical_keys: dict[tuple[str, bool | None, str | None], set[str]] = {}
     source_counts: dict[str, int] = {}
@@ -72,20 +64,23 @@ def exclude_historical_leakage(task, samples: list[dict[str, Any]]) -> Historica
             historical_ids.setdefault(sample_id, set()).add(source_name)
         historical_keys.setdefault(key, set()).add(source_name)
 
-    for entry in index.get("runs", []):
+    for entry in list_runs(task.project_root, task_name=task.name):
         run_id = entry.get("run_id")
         if run_id == task.run_id:
             continue
-        run_root = task.runs_root / run_id
-        for source_name, relative_path in (
-            ("gold_eval", "gold/gold_eval.jsonl"),
-            ("hard_cases", "gold/hard_cases.jsonl"),
-            ("eval_predictions", "exports/eval_predictions.jsonl"),
+        for source_name, artifact_key in (
+            ("gold_eval", "gold_eval"),
+            ("hard_cases", "hard_cases"),
+            ("eval_predictions", "eval_predictions"),
         ):
-            path = run_root / relative_path
-            if not path.exists():
+            rows = load_artifact_records(
+                task.project_root,
+                task_name=task.name,
+                run_id=run_id,
+                artifact_key=artifact_key,
+            )
+            if not rows:
                 continue
-            rows = read_jsonl(path)
             for row in rows:
                 if source_name == "eval_predictions":
                     sample_id, key = eval_identity(row)

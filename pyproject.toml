@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 dataforge = "dataforge.cli:main"
 dataforge-web = "dataforge.web.app:main"
+dataforge-migrate-sqlite = "dataforge.scripts.migrate_runs_to_sqlite:main"
 
 [build-system]
 requires = ["setuptools>=68"]
