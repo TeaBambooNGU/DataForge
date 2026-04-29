@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-dataforge.egg-info/PKG-INFO
-dataforge.egg-info/SOURCES.txt
-dataforge.egg-info/dependency_links.txt
-dataforge.egg-info/requires.txt
-dataforge.egg-info/top_level.txt

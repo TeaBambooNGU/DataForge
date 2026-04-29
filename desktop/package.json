@@ -1,0 +1,90 @@
+{
+  "name": "dataforge-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DataForge desktop shell",
+  "author": "AIplusLLM",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "build:resources": "node ./scripts/build-resources.mjs",
+    "build:seed": "node ./scripts/prepare-seed.mjs",
+    "build:backend": "node ./scripts/build-backend.mjs",
+    "dist:mac:dir": "npm run build:frontend && npm run build:resources && npm run build:seed && npm run build:backend && electron-builder --mac dir",
+    "dist:mac": "npm run build:frontend && npm run build:resources && npm run build:seed && npm run build:backend && electron-builder --mac dmg",
+    "dist:win": "npm run build:frontend && npm run build:resources && npm run build:seed && npm run build:backend && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^36.3.2",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^2.1.8"
+  },
+  "build": {
+    "appId": "com.aiplusllm.dataforge",
+    "productName": "DataForge",
+    "icon": "buildResources/icon.icns",
+    "directories": {
+      "buildResources": "buildResources",
+      "output": "../dist/desktop"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/backend/dataforge-backend",
+        "to": "backend/dataforge-backend"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend-dist"
+      },
+      {
+        "from": "../dist/seed/tasks",
+        "to": "seed/tasks"
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "icon": "buildResources/icon.icns",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "icon": "buildResources/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "dmg": {
+      "background": "buildResources/dmg-background.png",
+      "icon": "buildResources/icon.icns",
+      "window": {
+        "width": 1280,
+        "height": 800
+      },
+      "contents": [
+        {
+          "x": 840,
+          "y": 404,
+          "type": "file"
+        },
+        {
+          "x": 1088,
+          "y": 404,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

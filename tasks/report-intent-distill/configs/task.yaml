@@ -5,20 +5,22 @@ task_type: classification
 entry_schema: conversation_action
 runtime:
   generator:
-    provider: minimax
-    model: MiniMax-M2.7
-    temperature: 0
     seed: 42
     batch_size: 32
     retry_policy: none
     prompt_version: v1
+    temperature: 0
     max_tokens: 1024
     max_retries: 2
     retry_backoff_seconds: 1
-    max_retry_backoff_seconds: 8
+    response_format_json_object: true
+    base_url_env: XIAOMI_BASE_URL
+    api_key_env: XIAOMI_API_KEY
+    provider: xiaomi
+    model: mimo-v2-flash
   teacher:
-    provider: minimax
-    model: MiniMax-M2.7
+    provider: xiaomi
+    model: mimo-v2-flash
     temperature: 0
     seed: 42
     batch_size: 64
@@ -29,8 +31,8 @@ runtime:
     retry_backoff_seconds: 1
     max_retry_backoff_seconds: 8
   eval:
-    provider: minimax
-    model: MiniMax-M2.7
+    provider: xiaomi
+    model: mimo-v2-flash
     temperature: 0
     prompt_version: v1
     max_tokens: 1024
@@ -49,8 +51,12 @@ exports:
   train_format: chatml_jsonl
   eval_format: promptfoo_jsonl
   student_format: chatml_jsonl
-  sft_system_prompt: |
-    你是一个意图分类器。
+  sft_system_prompt: '你是一个意图分类器。
+
     你必须根据用户输入，在以下标签中只选择一个：chat、rewrite_report、regenerate_report。
+
     仅输出单行 JSON，格式必须为 {"action":"标签名"}。
+
     如果当前没有可见报告，不允许输出 rewrite_report。
+
+    '

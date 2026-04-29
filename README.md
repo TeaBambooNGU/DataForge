@@ -7,7 +7,7 @@ The project is built around a simple idea: treat synthetic generation, teacher l
 Current MVP scope:
 
 - task-driven offline distillation pipelines
-- run-level artifact versioning under `tasks/<task>/runs/<run_id>/`
+- SQLite-backed run and artifact storage
 - local CLI for stage execution
 - local FastAPI + React workbench for inspection and editing
 - human review to gold-set workflow
@@ -24,10 +24,10 @@ The first built-in task is `report-intent-distill`, a 3-class intent classificat
 
 - Unified pipeline stages: `generate`, `classify`, `filter-export`, `review-export`, `validate-review`, `build-gold`, `eval`, `student-export`
 - Task-isolated configuration under `tasks/<task>/configs/`
-- Run-isolated artifacts, manifests, and status tracking
+- SQLite-backed run state, review records, artifact records, and evaluation metadata
 - Provider abstraction for `mock`, `openai_compatible`, `anthropic_compatible`, and `minimax`
 - Human review records with multi-review merge support before gold freezing
-- Promptfoo test export, run-scoped Promptfoo config rendering, result capture, and structured `eval_result.json`
+- Promptfoo test export, run-scoped Promptfoo config rendering, result capture, and structured eval summary
 - Config-driven `train_format` / `eval_format` export rendering plus version metadata files
 - Cross-run leakage blocking against historical `gold / eval / hard_cases`
 - Standard `student-export` bundle under `training/`
@@ -113,6 +113,12 @@ Then start the local FastAPI workbench:
 uv run dataforge-web --host 127.0.0.1 --port 8000
 ```
 
+If you only need the API during local Electron development, the backend can also run without a built frontend bundle:
+
+```bash
+uv run dataforge-web --host 127.0.0.1 --port 8000 --project-root .
+```
+
 The web workbench lets you:
 
 - choose or create a task from the home screen
@@ -122,6 +128,84 @@ The web workbench lets you:
 - edit review records
 - trigger pipeline stages from the browser
 - open provider settings from the top-right gear icon
+
+### Build The Desktop App
+
+The desktop shell lives under `desktop/` and packages:
+
+- the Electron shell
+- a PyInstaller-built Python backend executable
+- the built frontend bundle
+- seed task configs copied into the user's workspace on first launch
+- generated application icons and DMG installer resources from source SVG assets
+
+Install desktop dependencies:
+
+```bash
+cd desktop
+npm install
+```
+
+If Electron binary downloads are unstable behind your network, install desktop dependencies with a proxy plus an Electron mirror:
+
+```bash
+cd desktop
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export ELECTRON_GET_USE_PROXY=true
+export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+npm install
+```
+
+Run the Electron shell in development mode:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+In another terminal:
+
+```bash
+cd desktop
+npm run dev
+```
+
+Build a macOS DMG:
+
+```bash
+cd desktop
+npm run dist:mac
+```
+
+If you are building the macOS package behind a proxy, keep the proxy variables but do not set `ELECTRON_MIRROR` during the DMG step, otherwise `dmg-builder` may be redirected to a mirror path that does not exist:
+
+```bash
+cd desktop
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export ELECTRON_GET_USE_PROXY=true
+npm run dist:mac
+```
+
+If you only want to verify the unpacked macOS app bundle first:
+
+```bash
+cd desktop
+npm run dist:mac:dir
+```
+
+Build a Windows NSIS installer:
+
+```bash
+cd desktop
+npm run dist:win
+```
+
+Packaged desktop builds create a writable user workspace under the system Documents directory as `DataForge/`, and the application seeds task configs there on first launch.
 
 ## CLI Usage
 
@@ -142,8 +226,7 @@ uv run dataforge run-all --task report-intent-distill
 Behavior:
 
 - `generate` and `run-all` create a new `run_id` when `--run-id` is omitted
-- other commands reuse `tasks/<task>/runs/latest.json` by default
-- all stage outputs are indexed in `tasks/<task>/runs/index.json`
+- other commands reuse the latest run for the task by default
 - each run tracks a monotonic status such as `generated`, `classified`, `gold_built`, and `evaluated`
 - `student-export` writes a standard training bundle under `tasks/<task>/runs/<run_id>/training/`
 
@@ -170,18 +253,20 @@ generate
   -> eval
 ```
 
-Stage outputs:
+Runtime storage:
 
-- `generate`: `raw/raw_candidates.jsonl`
-- `classify`: `raw/teacher_labeled.jsonl`
-- `filter-export`: filtered train set, configurable train export, train export metadata, rejected samples, review pool, Promptfoo placeholder export
-- `review-export`: `processed/review_candidates.jsonl`
+- core run state, review records, labeled samples, filtered datasets, gold sets, eval predictions, and metadata are stored in SQLite
+- task configuration stays in `tasks/<task>/configs/`
+- exported artifacts remain on disk when they are intended for external consumption or human inspection
+
+Persisted file outputs:
+
+- `filter-export`: `exports/train_dataset.jsonl`
 - `validate-review`: `reports/review_validation.md`
-- `build-gold`: `gold/gold_eval.jsonl`, `gold/hard_cases.jsonl`, `gold/hard_cases_metadata.json`
-- `eval`: configurable eval export, eval export metadata, predictions, structured eval result, Promptfoo config, Promptfoo results, eval summary, confusion analysis
-- `student-export`: `training/student_train.jsonl`, `training/metadata.json`
+- `eval`: `exports/eval_dataset.jsonl`, `exports/eval_for_promptfoo.jsonl`, `reports/promptfoo/config.yaml`, `reports/promptfoo/results.json`, `reports/eval_summary.md`, `reports/confusion_analysis.md`
+- `student-export`: `training/student_train.jsonl`
 
-## Run Layout
+## Storage Layout
 
 Every run is versioned under:
 
@@ -193,25 +278,26 @@ Typical layout:
 
 ```text
 tasks/report-intent-distill/runs/<run_id>/
-  raw/
-  processed/
-  gold/
   exports/
   training/
   reports/
 ```
 
+Runtime database:
+
+- `.dataforge/dataforge.db`: run state, stages, artifact records, review records, and evaluation metadata
+
 Important files:
 
-- `runs/latest.json`: pointer to the default run for follow-up stages
-- `runs/index.json`: run index and stage summaries
-- `reports/manifests/<stage>.json`: per-stage execution metadata
-- `exports/train_dataset_metadata.json`: train export version summary and leakage blocking summary
-- `exports/eval_dataset_metadata.json`: eval export version summary
 - `reports/promptfoo/config.yaml`: run-scoped Promptfoo config rendered by DataForge
 - `reports/promptfoo/results.json`: raw Promptfoo evaluation result
-- `reports/eval_result.json`: structured eval replay summary
-- `training/metadata.json`: standard student training bundle metadata
+- `reports/review_validation.md`: human review validation summary
+- `reports/eval_summary.md`: human-readable evaluation summary
+- `reports/confusion_analysis.md`: confusion analysis report
+- `exports/train_dataset.jsonl`: train export for audit or downstream tooling
+- `exports/eval_dataset.jsonl`: eval export for downstream tooling
+- `exports/eval_for_promptfoo.jsonl`: Promptfoo input dataset
+- `training/student_train.jsonl`: final student training bundle
 
 ## Project Structure
 
@@ -235,6 +321,13 @@ frontend/
   src/
   dist/
 
+desktop/
+  package.json
+  main.js
+  preload.js
+  buildResources/
+  scripts/
+
 docs/
   architecture.md
   DataForge-platform-mvp-design.md
@@ -243,11 +336,12 @@ docs/
 
 Responsibilities:
 
-- `src/dataforge/core/`: registry, schemas, I/O, filtering, review, eval utilities
+- `src/dataforge/core/`: registry, SQLite storage, schemas, filtering, review, eval utilities
 - `src/dataforge/pipelines/`: stage implementations
 - `src/dataforge/providers/`: provider adapters
 - `tasks/<task>/configs/`: task-specific prompts, labels, rules, and task metadata
 - `frontend/`: React + Vite browser workbench source and build output
+- `desktop/`: Electron shell, backend build scripts, source icon assets, and installer config
 - `docs/`: architecture, design, and development planning
 
 ## Task Configuration

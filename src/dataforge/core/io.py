@@ -94,5 +94,4 @@ def write_run_manifest(
         "details": details or {},
         "completed_at": utc_now(),
     }
-    write_json(manifest_path, payload)
     return payload

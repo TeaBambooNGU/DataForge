@@ -34,14 +34,15 @@ export default function TaskConfigWorkspace({
   taskConfigDraft,
   isEditingTaskConfig,
   setIsEditingTaskConfig,
-  configViewMode,
-  setConfigViewMode,
+  editingTaskConfigCard,
+  setEditingTaskConfigCard,
   taskConfigBaseline,
   setTaskConfigDraft,
   setPromptFocus,
   setFlashMessage,
-  savingTaskConfig,
+  savingTaskConfigCard,
   onSaveTaskConfig,
+  onRevertTaskConfigCard,
   configSummaryCards,
   taskConfigDirty,
   configAdvice,
@@ -70,6 +71,71 @@ export default function TaskConfigWorkspace({
 }) {
   const generatorPromptMeta = buildPromptMeta(taskConfigDraft.generatorPrompt);
   const teacherPromptMeta = buildPromptMeta(taskConfigDraft.teacherPrompt);
+  const promptPanels = {
+    generator: {
+      label: "Generator Prompt",
+      text: taskConfigDraft.generatorPrompt,
+      meta: generatorPromptMeta,
+    },
+    teacher: {
+      label: "Teacher Prompt",
+      text: taskConfigDraft.teacherPrompt,
+      meta: teacherPromptMeta,
+    },
+  };
+  const activePromptPanel = promptPanels[promptFocus] || promptPanels.generator;
+  const isCardSaving = (cardKey) => savingTaskConfigCard === cardKey;
+  const isCardEditing = (cardKey) => editingTaskConfigCard === cardKey;
+  const hasActiveEditingCard = Boolean(editingTaskConfigCard);
+  const canEditCard = (cardKey) => !hasActiveEditingCard || isCardEditing(cardKey);
+  const isCardLocked = (cardKey) => !isCardEditing(cardKey);
+
+  function renderCardActions(cardKey, saveLabel = "保存本卡片", options = {}) {
+    const { onStartEdit } = options;
+    if (!isCardEditing(cardKey)) {
+      return (
+        <div className="section-inline-actions">
+          <button
+            className="ghost-button card-action-button card-edit-button"
+            type="button"
+            disabled={hasActiveEditingCard || Boolean(savingTaskConfigCard)}
+            onClick={() => {
+              setEditingTaskConfigCard(cardKey);
+              if (!isEditingTaskConfig) {
+                setIsEditingTaskConfig(true);
+              }
+              onStartEdit?.();
+            }}
+          >
+            编辑
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="section-inline-actions">
+        <button
+          className="ghost-button card-action-button card-revert-button"
+          type="button"
+          disabled={Boolean(savingTaskConfigCard)}
+          onClick={() => {
+            onRevertTaskConfigCard(cardKey);
+            setEditingTaskConfigCard("");
+          }}
+        >
+          回退本卡片
+        </button>
+        <button
+          className="primary-button card-action-button card-save-button"
+          type="button"
+          disabled={Boolean(savingTaskConfigCard)}
+          onClick={() => onSaveTaskConfig(cardKey)}
+        >
+          {isCardSaving(cardKey) ? "保存中..." : saveLabel}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="panel-grid">
@@ -82,50 +148,45 @@ export default function TaskConfigWorkspace({
           <div className="section-inline-actions">
             {isEditingTaskConfig ? (
               <>
-                <div className="segmented-control">
-                  <button
-                    className={classNames("ghost-button", configViewMode === "visual" && "is-active")}
-                    type="button"
-                    aria-pressed={configViewMode === "visual"}
-                    onClick={() => setConfigViewMode("visual")}
-                  >
-                    Visual
-                  </button>
-                  <button
-                    className={classNames("ghost-button", configViewMode === "raw" && "is-active")}
-                    type="button"
-                    aria-pressed={configViewMode === "raw"}
-                    onClick={() => setConfigViewMode("raw")}
-                  >
-                    Raw Fallback
-                  </button>
-                </div>
                 <button
                   className="ghost-button"
                   type="button"
                   onClick={() => {
-                    setTaskConfigDraft(deepClone(taskConfigBaseline));
+                    if (taskConfigDirty) {
+                      setFlashMessage("请先保存或回退当前卡片改动，再退出编辑态", "warning");
+                      return;
+                    }
+                    setEditingTaskConfigCard("");
                     setPromptFocus("generator");
                     setIsEditingTaskConfig(false);
-                    setFlashMessage("已取消编辑并回退到最近一次加载状态", "warning");
                   }}
                 >
-                  取消编辑
+                  返回只读
                 </button>
                 <button
                   className="ghost-button"
                   type="button"
-                  disabled={savingTaskConfig}
-                  onClick={onSaveTaskConfig}
+                  disabled={Boolean(savingTaskConfigCard)}
+                  onClick={() => {
+                    setTaskConfigDraft(deepClone(taskConfigBaseline));
+                    setEditingTaskConfigCard("");
+                    setPromptFocus("generator");
+                    setIsEditingTaskConfig(false);
+                    setFlashMessage("已放弃全部未保存改动", "warning");
+                  }}
                 >
-                  {savingTaskConfig ? "保存中..." : "保存配置"}
+                  放弃全部改动
                 </button>
               </>
             ) : (
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsEditingTaskConfig(true)}
+                onClick={() => {
+                  setEditingTaskConfigCard("");
+                  setPromptFocus("generator");
+                  setIsEditingTaskConfig(true);
+                }}
               >
                 编辑配置
               </button>
@@ -172,6 +233,58 @@ export default function TaskConfigWorkspace({
               </article>
             </div>
 
+            <article className="config-panel-card prompt-view-card prompt-view-card-readonly">
+              <div className="artifact-record-head">
+                <div>
+                  <span className="eyebrow">Prompt Focus</span>
+                  <h3>Prompt View</h3>
+                  <p>先确认 generator / teacher prompt 的语气、边界和任务 framing，再决定是否进入编辑态。</p>
+                </div>
+                <span className="micro-chip">只读主视图</span>
+              </div>
+              <div className="segmented-control">
+                <button
+                  className={classNames("ghost-button", promptFocus === "generator" && "is-active")}
+                  type="button"
+                  aria-pressed={promptFocus === "generator"}
+                  onClick={() => setPromptFocus("generator")}
+                >
+                  Generator Prompt
+                </button>
+                <button
+                  className={classNames("ghost-button", promptFocus === "teacher" && "is-active")}
+                  type="button"
+                  aria-pressed={promptFocus === "teacher"}
+                  onClick={() => setPromptFocus("teacher")}
+                >
+                  Teacher Prompt
+                </button>
+              </div>
+              <div className="summary-chip-row">
+                <article className="summary-chip">
+                  <span>lines</span>
+                  <strong>{activePromptPanel.meta.lines}</strong>
+                </article>
+                <article className="summary-chip">
+                  <span>chars</span>
+                  <strong>{activePromptPanel.meta.chars}</strong>
+                </article>
+                <article className="summary-chip">
+                  <span>words</span>
+                  <strong>{activePromptPanel.meta.words}</strong>
+                </article>
+              </div>
+              <div className="prompt-view-shell">
+                <div className="prompt-view-shell-head">
+                  <span>{activePromptPanel.label}</span>
+                  <strong>当前生效文本</strong>
+                </div>
+                <div className="prompt-view-body" role="textbox" aria-readonly="true">
+                  {activePromptPanel.text || "当前没有 prompt 内容。"}
+                </div>
+              </div>
+            </article>
+
             <div className="config-advice-grid">
               <article className="config-panel-card">
                 <div className="artifact-record-head">
@@ -210,7 +323,16 @@ export default function TaskConfigWorkspace({
                         <h3>{meta.title}</h3>
                         <p>{meta.description}</p>
                       </div>
-                      <span className="micro-chip">{meta.index}</span>
+                      <div className="card-head-actions">
+                        <span className="micro-chip">{meta.index}</span>
+                        {renderCardActions(`runtime-${stage}`, "保存本阶段", {
+                          onStartEdit: () => {
+                            if (!expandedRuntimeStages[stage]) {
+                              toggleRuntimeStageExpanded(stage);
+                            }
+                          },
+                        })}
+                      </div>
                     </div>
                     <div className="artifact-key-grid">
                       {[
@@ -241,25 +363,15 @@ export default function TaskConfigWorkspace({
             <div className="config-advice-grid">
               <article className="config-panel-card">
                 <div className="artifact-record-head">
-                  <h3>Prompts</h3>
-                  <span className="micro-chip">Prompt Meta</span>
+                  <h3>Label Set</h3>
+                  <span className="micro-chip">只读摘要</span>
                 </div>
-                <div className="artifact-key-grid">
-                  {[
-                    ["generator_lines", generatorPromptMeta.lines],
-                    ["generator_chars", generatorPromptMeta.chars],
-                    ["teacher_lines", teacherPromptMeta.lines],
-                    ["teacher_chars", teacherPromptMeta.chars],
-                  ].map(([label, value]) => (
-                    <div key={label} className="artifact-key-card">
-                      <strong>{label}</strong>
-                      <span>{formatMetricValue(label, value)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="config-bullet-list compact-list">
-                  <span>摘要态只展示 prompt 规模和健康度，不直接暴露整段文本。</span>
-                  <span>进入编辑态后可切换 Generator / Teacher Prompt 双视图。</span>
+                <div className="config-bullet-list">
+                  {labelDraftList.length ? (
+                    labelDraftList.map((label) => <span key={label}>{label}</span>)
+                  ) : (
+                    <span>当前没有 labels。</span>
+                  )}
                 </div>
               </article>
 
@@ -316,116 +428,6 @@ export default function TaskConfigWorkspace({
               </div>
             </article>
           </div>
-        ) : configViewMode === "raw" ? (
-          <div className="editor-stack">
-            <article className="config-panel-card">
-              <div className="artifact-record-head">
-                <div>
-                  <h3>Raw Config Fallback</h3>
-                  <p>用于处理可视化编辑器尚未覆盖的细节字段，保存仍走同一套 API。</p>
-                </div>
-                <span className="micro-chip">advanced</span>
-              </div>
-              <div className="config-grid">
-                <label>
-                  <span>Task Name</span>
-                  <input
-                    type="text"
-                    value={taskConfigDraft.task.name}
-                    onChange={(event) =>
-                      setTaskConfigDraft((current) => ({
-                        ...current,
-                        task: { ...current.task, name: event.target.value },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  <span>Theme</span>
-                  <input
-                    type="text"
-                    value={taskConfigDraft.task.theme}
-                    onChange={(event) =>
-                      setTaskConfigDraft((current) => ({
-                        ...current,
-                        task: { ...current.task, theme: event.target.value },
-                      }))
-                    }
-                  />
-                </label>
-              </div>
-            </article>
-            <label>
-              <span>Runtime JSON</span>
-              <textarea
-                rows="12"
-                value={taskConfigDraft.runtimeText}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, runtimeText: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Rules JSON</span>
-              <textarea
-                rows="8"
-                value={taskConfigDraft.rulesText}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, rulesText: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Exports JSON</span>
-              <textarea
-                rows="8"
-                value={taskConfigDraft.exportsText}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, exportsText: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Labels</span>
-              <textarea
-                rows="6"
-                value={taskConfigDraft.labelsText}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, labelsText: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Scenarios JSON</span>
-              <textarea
-                rows="12"
-                value={taskConfigDraft.scenariosText}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, scenariosText: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Generator Prompt</span>
-              <textarea
-                rows="10"
-                value={taskConfigDraft.generatorPrompt}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, generatorPrompt: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Teacher Prompt</span>
-              <textarea
-                rows="10"
-                value={taskConfigDraft.teacherPrompt}
-                onChange={(event) =>
-                  setTaskConfigDraft((current) => ({ ...current, teacherPrompt: event.target.value }))
-                }
-              />
-            </label>
-          </div>
         ) : (
           <div className="task-dossier">
             <article className="config-panel-card">
@@ -434,7 +436,10 @@ export default function TaskConfigWorkspace({
                   <span className="eyebrow">Task Dossier</span>
                   <h3>{taskConfigDraft.task.name}</h3>
                 </div>
-                <span className="micro-chip">{taskConfigDraft.task.language}</span>
+                <div className="card-head-actions">
+                  <span className="micro-chip">{taskConfigDraft.task.language}</span>
+                  {renderCardActions("task")}
+                </div>
               </div>
               <div className="artifact-key-grid">
                 {[
@@ -455,6 +460,7 @@ export default function TaskConfigWorkspace({
                   <input
                     type="text"
                     value={taskConfigDraft.task.name}
+                    disabled={isCardLocked("task")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -468,6 +474,7 @@ export default function TaskConfigWorkspace({
                   <input
                     type="text"
                     value={taskConfigDraft.task.theme}
+                    disabled={isCardLocked("task")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -481,6 +488,7 @@ export default function TaskConfigWorkspace({
                   <input
                     type="text"
                     value={taskConfigDraft.task.language}
+                    disabled={isCardLocked("task")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -494,6 +502,7 @@ export default function TaskConfigWorkspace({
                   <input
                     type="text"
                     value={taskConfigDraft.task.task_type}
+                    disabled={isCardLocked("task")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -507,6 +516,7 @@ export default function TaskConfigWorkspace({
                   <input
                     type="text"
                     value={taskConfigDraft.task.entry_schema}
+                    disabled={isCardLocked("task")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -576,16 +586,41 @@ export default function TaskConfigWorkspace({
                   stageConfig
                 );
                 const globalProvider = getGlobalProviderSettings(settings, stageConfig.provider);
+                const stageCardKey = `runtime-${stage}`;
+                const stageLocked = isCardLocked(stageCardKey);
                 return (
-                  <article key={stage} className="config-panel-card runtime-stage-card">
+                  <article
+                    key={stage}
+                    className={classNames(
+                      "config-panel-card",
+                      "runtime-stage-card",
+                      isCardEditing(stageCardKey) && "is-editing"
+                    )}
+                  >
                     <div className="artifact-record-head">
                       <div>
                         <span className="eyebrow">{meta.eyebrow}</span>
                         <h3>{meta.title}</h3>
                         <p>{meta.description}</p>
                       </div>
-                      <span className="micro-chip">{meta.index}</span>
+                      <div className="card-head-actions">
+                        <span className="micro-chip">{meta.index}</span>
+                        {renderCardActions(stageCardKey, "保存本阶段", {
+                          onStartEdit: () => {
+                            if (!expandedRuntimeStages[stage]) {
+                              toggleRuntimeStageExpanded(stage);
+                            }
+                          },
+                        })}
+                      </div>
                     </div>
+
+                    {isCardEditing(stageCardKey) ? (
+                      <div className="runtime-editing-banner">
+                        <span className="micro-chip">编辑中</span>
+                        <p>当前卡片已解锁，provider、model 和高级参数现在可直接修改并单卡保存。</p>
+                      </div>
+                    ) : null}
 
                     <div className="runtime-provider-row">
                       {providerOptions.map((provider) => (
@@ -597,6 +632,7 @@ export default function TaskConfigWorkspace({
                           )}
                           type="button"
                           aria-pressed={stageConfig.provider === provider.name}
+                          disabled={!canEditCard(stageCardKey) || stageLocked}
                           onClick={() => applyRuntimePresetToStage(stage, provider.name, "recommended")}
                         >
                           <strong>{provider.label}</strong>
@@ -618,7 +654,7 @@ export default function TaskConfigWorkspace({
                       <button
                         className="ghost-button"
                         type="button"
-                        disabled={!stageConfig.provider}
+                        disabled={!stageConfig.provider || stageLocked}
                         onClick={() => applyRuntimePresetToStage(stage, stageConfig.provider, "global")}
                       >
                         套用全局配置
@@ -626,7 +662,7 @@ export default function TaskConfigWorkspace({
                       <button
                         className="ghost-button"
                         type="button"
-                        disabled={!stageConfig.provider}
+                        disabled={!stageConfig.provider || stageLocked}
                         onClick={() => applyRuntimePresetToStage(stage, stageConfig.provider, "recommended")}
                       >
                         套用推荐配置
@@ -634,6 +670,7 @@ export default function TaskConfigWorkspace({
                       <button
                         className="ghost-button"
                         type="button"
+                        disabled={stageLocked}
                         onClick={() => toggleRuntimeStageExpanded(stage)}
                       >
                         {expandedRuntimeStages[stage] ? "收起高级参数" : "展开高级参数"}
@@ -652,6 +689,7 @@ export default function TaskConfigWorkspace({
                             )}
                             type="button"
                             aria-pressed={stageConfig.model === model.value}
+                            disabled={stageLocked}
                             onClick={() =>
                               updateRuntimeStage(stage, (current) => ({
                                 ...current,
@@ -683,6 +721,7 @@ export default function TaskConfigWorkspace({
                                         ? "false"
                                         : ""
                                   }
+                                  disabled={stageLocked}
                                   onChange={(event) =>
                                     updateRuntimeStage(stage, (current) => ({
                                       ...current,
@@ -701,6 +740,7 @@ export default function TaskConfigWorkspace({
                                 <>
                                   <select
                                     value={stageConfig[field.key] ?? ""}
+                                    disabled={stageLocked}
                                     onChange={(event) =>
                                       updateRuntimeStage(stage, (current) => ({
                                         ...current,
@@ -733,6 +773,7 @@ export default function TaskConfigWorkspace({
                                   min={field.min}
                                   max={field.max}
                                   value={stageConfig[field.key] ?? ""}
+                                  disabled={stageLocked}
                                   onChange={(event) =>
                                     updateRuntimeStage(stage, (current) => ({
                                       ...current,
@@ -762,6 +803,7 @@ export default function TaskConfigWorkspace({
                             <button
                               className="ghost-button"
                               type="button"
+                              disabled={stageLocked}
                               onClick={() => addRuntimeCustomEntry(stage)}
                             >
                               新增字段
@@ -781,6 +823,7 @@ export default function TaskConfigWorkspace({
                                         <input
                                           type="text"
                                           value={key}
+                                          disabled={stageLocked}
                                           onChange={(event) =>
                                             updateRuntimeCustomEntry(stage, key, event.target.value, value)
                                           }
@@ -789,10 +832,16 @@ export default function TaskConfigWorkspace({
                                       <label className="runtime-custom-field runtime-custom-mode">
                                         <span>Value Mode</span>
                                         {complexValue ? (
-                                          <input type="text" value="json only" readOnly />
+                                          <input
+                                            type="text"
+                                            value="json only"
+                                            readOnly
+                                            disabled={stageLocked}
+                                          />
                                         ) : (
                                           <select
                                             value={customMode}
+                                            disabled={stageLocked}
                                             onChange={(event) =>
                                               updateRuntimeCustomEntryMode(
                                                 stage,
@@ -816,10 +865,12 @@ export default function TaskConfigWorkspace({
                                             rows="3"
                                             value={getRuntimeCustomEntryInputValue(value, "json")}
                                             readOnly
+                                            disabled={stageLocked}
                                           />
                                         ) : resolvedType === "boolean" ? (
                                           <select
                                             value={getRuntimeCustomEntryInputValue(value, "boolean")}
+                                            disabled={stageLocked}
                                             onChange={(event) =>
                                               updateRuntimeCustomEntry(
                                                 stage,
@@ -840,6 +891,7 @@ export default function TaskConfigWorkspace({
                                           <input
                                             type={customMode === "number" ? "number" : "text"}
                                             value={getRuntimeCustomEntryInputValue(value, resolvedType)}
+                                            disabled={stageLocked}
                                             onChange={(event) =>
                                               updateRuntimeCustomEntry(
                                                 stage,
@@ -857,6 +909,7 @@ export default function TaskConfigWorkspace({
                                       <button
                                         className="danger-link"
                                         type="button"
+                                        disabled={stageLocked}
                                         onClick={() => updateRuntimeCustomEntry(stage, key, "", "")}
                                       >
                                         删除
@@ -888,23 +941,27 @@ export default function TaskConfigWorkspace({
                           )}
                         </article>
                       </>
-                    ) : null}
+                      ) : null}
                   </article>
                 );
               })}
             </div>
 
-            <div className="config-advice-grid">
+            <div className="config-advice-grid config-advice-grid-priority">
               <article className="config-panel-card">
                 <div className="artifact-record-head">
-                  <h3>Rules & Exports</h3>
-                  <span className="micro-chip">运行规则</span>
+                  <div>
+                    <h3>Rules & Exports</h3>
+                    <span className="micro-chip">运行规则</span>
+                  </div>
+                  {renderCardActions("rules-exports")}
                 </div>
                 <div className="config-grid">
                   <label>
                     <span>Disallow Rewrite Without Report</span>
                     <select
                       value={rulesDraft.disallow_rewrite_without_visible_report ? "true" : "false"}
+                      disabled={isCardLocked("rules-exports")}
                       onChange={(event) =>
                         updateTaskConfigJsonField(
                           "rulesText",
@@ -925,6 +982,7 @@ export default function TaskConfigWorkspace({
                     <input
                       type="text"
                       value={exportsDraft.train_format || ""}
+                      disabled={isCardLocked("rules-exports")}
                       onChange={(event) =>
                         updateTaskConfigJsonField(
                           "exportsText",
@@ -939,6 +997,7 @@ export default function TaskConfigWorkspace({
                     <input
                       type="text"
                       value={exportsDraft.eval_format || ""}
+                      disabled={isCardLocked("rules-exports")}
                       onChange={(event) =>
                         updateTaskConfigJsonField(
                           "exportsText",
@@ -953,6 +1012,7 @@ export default function TaskConfigWorkspace({
                     <input
                       type="text"
                       value={exportsDraft.student_format || ""}
+                      disabled={isCardLocked("rules-exports")}
                       onChange={(event) =>
                         updateTaskConfigJsonField(
                           "exportsText",
@@ -963,11 +1023,13 @@ export default function TaskConfigWorkspace({
                     />
                   </label>
                 </div>
-                <label>
+                <label className="config-textarea-block">
                   <span>Labels</span>
                   <textarea
+                    className="config-textarea config-textarea-compact"
                     rows="5"
                     value={taskConfigDraft.labelsText}
+                    disabled={isCardLocked("rules-exports")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({ ...current, labelsText: event.target.value }))
                     }
@@ -975,16 +1037,20 @@ export default function TaskConfigWorkspace({
                 </label>
               </article>
 
-              <article className="config-panel-card">
+              <article className="config-panel-card prompt-view-card">
                 <div className="artifact-record-head">
-                  <h3>Prompt View</h3>
-                  <span className="micro-chip">双视图</span>
+                  <div>
+                    <h3>Prompt View</h3>
+                    <span className="micro-chip">双视图</span>
+                  </div>
+                  {renderCardActions("prompt-view")}
                 </div>
                 <div className="segmented-control">
                   <button
                     className={classNames("ghost-button", promptFocus === "generator" && "is-active")}
                     type="button"
                     aria-pressed={promptFocus === "generator"}
+                    disabled={!canEditCard("prompt-view")}
                     onClick={() => setPromptFocus("generator")}
                   >
                     Generator Prompt
@@ -993,6 +1059,7 @@ export default function TaskConfigWorkspace({
                     className={classNames("ghost-button", promptFocus === "teacher" && "is-active")}
                     type="button"
                     aria-pressed={promptFocus === "teacher"}
+                    disabled={!canEditCard("prompt-view")}
                     onClick={() => setPromptFocus("teacher")}
                   >
                     Teacher Prompt
@@ -1001,44 +1068,24 @@ export default function TaskConfigWorkspace({
                 <div className="summary-chip-row">
                   <article className="summary-chip">
                     <span>lines</span>
-                    <strong>
-                      {(promptFocus === "generator"
-                        ? taskConfigDraft.generatorPrompt
-                        : taskConfigDraft.teacherPrompt
-                      ).split("\n").length}
-                    </strong>
+                    <strong>{activePromptPanel.meta.lines}</strong>
                   </article>
                   <article className="summary-chip">
                     <span>chars</span>
-                    <strong>
-                      {(promptFocus === "generator"
-                        ? taskConfigDraft.generatorPrompt
-                        : taskConfigDraft.teacherPrompt
-                      ).length}
-                    </strong>
+                    <strong>{activePromptPanel.meta.chars}</strong>
                   </article>
                   <article className="summary-chip">
                     <span>words</span>
-                    <strong>
-                      {(promptFocus === "generator"
-                        ? taskConfigDraft.generatorPrompt
-                        : taskConfigDraft.teacherPrompt
-                      )
-                        .trim()
-                        .split(/\s+/)
-                        .filter(Boolean).length}
-                    </strong>
+                    <strong>{activePromptPanel.meta.words}</strong>
                   </article>
                 </div>
-                <label>
-                  <span>{promptFocus === "generator" ? "Generator Prompt" : "Teacher Prompt"}</span>
+                <label className="config-textarea-block">
+                  <span>{activePromptPanel.label}</span>
                   <textarea
+                    className="config-textarea config-textarea-prompt"
                     rows="14"
-                    value={
-                      promptFocus === "generator"
-                        ? taskConfigDraft.generatorPrompt
-                        : taskConfigDraft.teacherPrompt
-                    }
+                    value={activePromptPanel.text}
+                    disabled={isCardLocked("prompt-view")}
                     onChange={(event) =>
                       setTaskConfigDraft((current) => ({
                         ...current,
@@ -1057,9 +1104,43 @@ export default function TaskConfigWorkspace({
                   <span className="eyebrow">Scenario Matrix</span>
                   <h2>Scenario Cards</h2>
                 </div>
-                <button className="ghost-button" type="button" onClick={addScenarioCard}>
-                  新增 Scenario
-                </button>
+                <div className="section-inline-actions">
+                  {isCardEditing("scenarios") ? (
+                    <>
+                      <button className="ghost-button" type="button" onClick={addScenarioCard}>
+                        新增 Scenario
+                      </button>
+                      <button
+                        className="ghost-button card-action-button card-revert-button"
+                        type="button"
+                        disabled={Boolean(savingTaskConfigCard)}
+                        onClick={() => {
+                          onRevertTaskConfigCard("scenarios");
+                          setEditingTaskConfigCard("");
+                        }}
+                      >
+                        回退本卡片
+                      </button>
+                      <button
+                        className="primary-button card-action-button card-save-button"
+                        type="button"
+                        disabled={Boolean(savingTaskConfigCard)}
+                        onClick={() => onSaveTaskConfig("scenarios")}
+                      >
+                        {isCardSaving("scenarios") ? "保存中..." : "保存本卡片"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="ghost-button card-action-button card-edit-button"
+                      type="button"
+                      disabled={hasActiveEditingCard || Boolean(savingTaskConfigCard)}
+                      onClick={() => setEditingTaskConfigCard("scenarios")}
+                    >
+                      编辑
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="scenario-card-grid">
                 {scenariosDraft.map((scenario, index) => (
@@ -1073,6 +1154,7 @@ export default function TaskConfigWorkspace({
                         <button
                           className="danger-link"
                           type="button"
+                          disabled={isCardLocked("scenarios")}
                           onClick={() => removeScenarioCard(index)}
                         >
                           删除
@@ -1081,13 +1163,14 @@ export default function TaskConfigWorkspace({
                         <span className="micro-chip">{`#${index + 1}`}</span>
                       )}
                     </div>
-                    <div className="config-grid">
+                    <div className="config-grid scenario-compact-grid">
                       <label>
                         <span>Intent</span>
                         <input
                           type="text"
                           value={scenario.intent || ""}
                           list={`scenario-labels-${index}`}
+                          disabled={isCardLocked("scenarios")}
                           onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
@@ -1103,9 +1186,10 @@ export default function TaskConfigWorkspace({
                       </label>
                       <label>
                         <span>Difficulty</span>
-                        <select
-                          value={scenario.difficulty || "medium"}
-                          onChange={(event) =>
+                          <select
+                            value={scenario.difficulty || "medium"}
+                            disabled={isCardLocked("scenarios")}
+                            onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
                               difficulty: event.target.value,
@@ -1121,12 +1205,13 @@ export default function TaskConfigWorkspace({
                       </label>
                       <label>
                         <span>Generation Count</span>
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={scenario.generation_count || estimateScenarioSamples(scenario)}
-                          onChange={(event) =>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={scenario.generation_count || estimateScenarioSamples(scenario)}
+                            disabled={isCardLocked("scenarios")}
+                            onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
                               generation_count: Number(event.target.value || 1),
@@ -1136,9 +1221,10 @@ export default function TaskConfigWorkspace({
                       </label>
                       <label>
                         <span>Dialogue Stage</span>
-                        <select
-                          value={scenario.context?.dialogue_stage || "standalone"}
-                          onChange={(event) =>
+                          <select
+                            value={scenario.context?.dialogue_stage || "standalone"}
+                            disabled={isCardLocked("scenarios")}
+                            onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
                               context: {
@@ -1157,9 +1243,10 @@ export default function TaskConfigWorkspace({
                       </label>
                       <label>
                         <span>Has Visible Report</span>
-                        <select
-                          value={scenario.context?.has_visible_report ? "true" : "false"}
-                          onChange={(event) =>
+                          <select
+                            value={scenario.context?.has_visible_report ? "true" : "false"}
+                            disabled={isCardLocked("scenarios")}
+                            onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
                               context: {
@@ -1175,10 +1262,11 @@ export default function TaskConfigWorkspace({
                       </label>
                       <label>
                         <span>Language</span>
-                        <input
-                          type="text"
-                          value={scenario.context?.language || taskConfigDraft.task.language || "zh"}
-                          onChange={(event) =>
+                          <input
+                            type="text"
+                            value={scenario.context?.language || taskConfigDraft.task.language || "zh"}
+                            disabled={isCardLocked("scenarios")}
+                            onChange={(event) =>
                             updateScenarioAt(index, (current) => ({
                               ...current,
                               context: {
@@ -1190,54 +1278,62 @@ export default function TaskConfigWorkspace({
                         />
                       </label>
                     </div>
-                    <label>
-                      <span>Tags</span>
-                      <input
-                        type="text"
-                        value={(scenario.tags || []).join(", ")}
-                        onChange={(event) =>
-                          updateScenarioAt(index, (current) => ({
-                            ...current,
-                            tags: event.target.value
-                              .split(",")
-                              .map((item) => item.trim())
-                              .filter(Boolean),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>Previous Report Summary</span>
-                      <textarea
-                        rows="3"
-                        value={scenario.context?.previous_report_summary || ""}
-                        onChange={(event) =>
-                          updateScenarioAt(index, (current) => ({
-                            ...current,
-                            context: {
-                              ...(current.context || {}),
-                              previous_report_summary: event.target.value,
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>Templates</span>
-                      <textarea
-                        rows="5"
-                        value={(scenario.templates || []).join("\n")}
-                        onChange={(event) =>
-                          updateScenarioAt(index, (current) => ({
-                            ...current,
-                            templates: event.target.value
-                              .split("\n")
-                              .map((item) => item.trim())
-                              .filter(Boolean),
-                          }))
-                        }
-                      />
-                    </label>
+                    <div className="scenario-editor-fields">
+                      <label className="config-textarea-block scenario-field-block">
+                        <span>Tags</span>
+                        <input
+                          className="scenario-text-input"
+                          type="text"
+                          value={(scenario.tags || []).join(", ")}
+                          disabled={isCardLocked("scenarios")}
+                          onChange={(event) =>
+                            updateScenarioAt(index, (current) => ({
+                              ...current,
+                              tags: event.target.value
+                                .split(",")
+                                .map((item) => item.trim())
+                                .filter(Boolean),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="config-textarea-block scenario-field-block">
+                        <span>Previous Report Summary</span>
+                        <textarea
+                          className="config-textarea scenario-textarea scenario-textarea-summary"
+                          rows="3"
+                          value={scenario.context?.previous_report_summary || ""}
+                          disabled={isCardLocked("scenarios")}
+                          onChange={(event) =>
+                            updateScenarioAt(index, (current) => ({
+                              ...current,
+                              context: {
+                                ...(current.context || {}),
+                                previous_report_summary: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="config-textarea-block scenario-field-block">
+                        <span>Templates</span>
+                        <textarea
+                          className="config-textarea scenario-textarea scenario-textarea-templates"
+                          rows="5"
+                          value={(scenario.templates || []).join("\n")}
+                          disabled={isCardLocked("scenarios")}
+                          onChange={(event) =>
+                            updateScenarioAt(index, (current) => ({
+                              ...current,
+                              templates: event.target.value
+                                .split("\n")
+                                .map((item) => item.trim())
+                                .filter(Boolean),
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
                   </article>
                 ))}
               </div>

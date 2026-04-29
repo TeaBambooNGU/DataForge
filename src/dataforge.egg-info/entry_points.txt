@@ -1,3 +1,0 @@
-[console_scripts]
-dataforge = dataforge.cli:main
-dataforge-web = dataforge.web.app:main

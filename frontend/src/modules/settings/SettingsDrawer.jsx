@@ -10,6 +10,7 @@ import {
 } from "../../lib/taskConfig.js";
 
 export default function SettingsDrawer({
+  desktopInfo,
   settings,
   settingsDraft,
   settingsView,
@@ -29,6 +30,7 @@ export default function SettingsDrawer({
   updateProvider,
   updateCustomProviderDraft,
   setFlashMessage,
+  onOpenDesktopPath,
 }) {
   const [editingProviderName, setEditingProviderName] = useState("");
   const [editingProviderDraft, setEditingProviderDraft] = useState(null);
@@ -473,6 +475,54 @@ export default function SettingsDrawer({
                 <strong>{providerStatusSummary.probed}</strong>
               </article>
             </div>
+
+            {desktopInfo ? (
+              <section className="desktop-runtime-panel">
+                <div className="provider-create-header">
+                  <span className="eyebrow">Desktop Runtime</span>
+                  <h3>桌面环境</h3>
+                  <p className="muted-text">当前桌面壳、backend 地址和本地工作区入口。</p>
+                </div>
+
+                <div className="settings-summary-grid">
+                  <article className="summary-chip">
+                    <span>app version</span>
+                    <strong>{desktopInfo.appVersion || "-"}</strong>
+                  </article>
+                  <article className={classNames("summary-chip", desktopInfo.isPackaged ? "is-success" : "is-warning")}>
+                    <span>mode</span>
+                    <strong>{desktopInfo.isPackaged ? "packaged" : "development"}</strong>
+                  </article>
+                  <article className="summary-chip">
+                    <span>backend</span>
+                    <strong>{desktopInfo.backendBaseUrl || "-"}</strong>
+                  </article>
+                  <article className="summary-chip">
+                    <span>workspace</span>
+                    <strong>{desktopInfo.workspaceRoot || "-"}</strong>
+                  </article>
+                </div>
+
+                <div className="drawer-toolbar desktop-runtime-actions">
+                  <div className="drawer-toolbar-group">
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => onOpenDesktopPath(desktopInfo.workspaceRoot, "工作区")}
+                    >
+                      打开工作区
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => onOpenDesktopPath(desktopInfo.logFilePath, "日志文件")}
+                    >
+                      打开日志
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             <div className="provider-stack">
               {settingsDraft.providers.map((provider) => (

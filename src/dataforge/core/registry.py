@@ -6,31 +6,14 @@ from pathlib import Path
 import re
 from typing import Any
 
-from dataforge.core.io import read_json, read_yaml, utc_now, write_json, write_text, write_yaml
+from dataforge.core.io import read_yaml, write_text, write_yaml
+from dataforge.core.run_state import RUN_STATUS_ORDER
+from dataforge.core.storage import ensure_run, latest_run, list_run_stages, list_runs, record_stage as record_stage_in_storage
 from dataforge.core.runtime_catalog import resolve_runtime_map
 
 
 STATIC_PATH_KEYS = {"labels", "scenario_matrix", "generator_prompt", "teacher_prompt", "promptfoo"}
 TASK_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-RUN_STATUS_ORDER = {
-    "created": 0,
-    "generated": 1,
-    "classified": 2,
-    "filtered": 3,
-    "review_exported": 4,
-    "review_validated": 5,
-    "gold_built": 6,
-    "evaluated": 7,
-}
-STAGE_TO_STATUS = {
-    "generate": "generated",
-    "classify": "classified",
-    "filter_export": "filtered",
-    "review_export": "review_exported",
-    "validate_review": "review_validated",
-    "build_gold": "gold_built",
-    "eval": "evaluated",
-}
 RUN_ARTIFACT_PATHS = {
     "raw_candidates": "raw/raw_candidates.jsonl",
     "teacher_labeled": "raw/teacher_labeled.jsonl",
@@ -349,14 +332,6 @@ class TaskRun:
     def run_root(self) -> Path:
         return self.runs_root / self.run_id
 
-    @property
-    def latest_path(self) -> Path:
-        return self.runs_root / "latest.json"
-
-    @property
-    def index_path(self) -> Path:
-        return self.runs_root / "index.json"
-
     def path_for(self, key: str) -> Path:
         if key in STATIC_PATH_KEYS:
             return self.task.path_for(key)
@@ -367,66 +342,27 @@ class TaskRun:
 
     def ensure_registered(self) -> None:
         self.runs_root.mkdir(parents=True, exist_ok=True)
-        if not self.index_path.exists():
-            write_json(self.index_path, {"runs": []})
-        index = read_json(self.index_path)
-        runs = index.setdefault("runs", [])
-        if not any(entry["run_id"] == self.run_id for entry in runs):
-            now = utc_now()
-            runs.append(
-                {
-                    "run_id": self.run_id,
-                    "task_name": self.name,
-                    "run_root": str(self.run_root),
-                    "created_at": now,
-                    "updated_at": now,
-                    "status": "created",
-                    "last_stage": None,
-                    "stages": {},
-                }
-            )
-            write_json(self.index_path, index)
-        else:
-            for entry in runs:
-                if entry["run_id"] != self.run_id:
-                    continue
-                require_entry_status(entry)
-                break
-        current = self.current_status()
-        write_json(self.latest_path, {"run_id": self.run_id, "status": current or "created", "updated_at": utc_now()})
+        ensure_run(
+            self.project_root,
+            task_name=self.name,
+            task_root=self.task_root,
+            run_id=self.run_id,
+        )
 
     def current_status(self) -> str | None:
-        if not self.index_path.exists():
-            return None
-        index = read_json(self.index_path)
-        for entry in index.get("runs", []):
-            if entry["run_id"] == self.run_id:
-                return require_entry_status(entry)
-        return None
+        entry = _get_run_entry(self.task, self.run_id)
+        return None if entry is None else require_entry_status(entry)
 
     def record_stage(self, stage_name: str, manifest: dict[str, Any], manifest_path: Path) -> None:
         self.ensure_registered()
-        index = read_json(self.index_path)
-        for entry in index.get("runs", []):
-            if entry["run_id"] != self.run_id:
-                continue
-            entry["updated_at"] = utc_now()
-            entry["last_stage"] = stage_name
-            next_status = STAGE_TO_STATUS.get(stage_name, require_entry_status(entry))
-            current_status = require_entry_status(entry)
-            if RUN_STATUS_ORDER[next_status] >= RUN_STATUS_ORDER[current_status]:
-                entry["status"] = next_status
-            entry.setdefault("stages", {})[stage_name] = {
-                "manifest_path": str(manifest_path),
-                "completed_at": manifest.get("completed_at"),
-                "stats": manifest.get("stats", {}),
-                "summary": manifest.get("summary", {}),
-            }
-            break
-        write_json(self.index_path, index)
-        write_json(
-            self.latest_path,
-            {"run_id": self.run_id, "status": self.current_status() or "created", "updated_at": utc_now()},
+        record_stage_in_storage(
+            self.project_root,
+            task_name=self.name,
+            task_root=self.task_root,
+            run_id=self.run_id,
+            stage_name=stage_name,
+            manifest=manifest,
+            manifest_path=str(manifest_path),
         )
 
 
@@ -442,10 +378,9 @@ def require_entry_status(entry: dict[str, Any]) -> str:
 
 
 def latest_run_id(task: TaskConfig) -> str | None:
-    latest_path = task.task_root / "runs" / "latest.json"
-    if not latest_path.exists():
+    latest = latest_run(task.project_root, task_name=task.name)
+    if latest is None:
         return None
-    latest = read_json(latest_path)
     return latest.get("run_id")
 
 
@@ -466,3 +401,11 @@ def resolve_task_run(task: TaskConfig, *, command: str, run_id: str | None = Non
             f"No previous run found for task {task.name}. Run generate first or pass --run-id explicitly."
         )
     return create_task_run(task, current)
+
+
+def _get_run_entry(task: TaskConfig, run_id: str) -> dict[str, Any] | None:
+    for entry in _build_run_index(task).get("runs", []):
+        if entry["run_id"] == run_id:
+            return entry
+    return None
+

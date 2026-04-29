@@ -1,19 +1,42 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from dataforge.core.io import read_jsonl, write_json, write_jsonl, write_run_manifest
+from dataforge.core.io import write_run_manifest
+from dataforge.core.logging_config import task_run_context
 from dataforge.core.registry import TaskRun
 from dataforge.core.review import group_review_records, merge_review_records, validate_review_records
 from dataforge.core.schemas import validate_samples
+from dataforge.core.storage import load_artifact_records, load_review_records, save_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 
 
+logger = logging.getLogger(__name__)
+
+
 def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, Path]:
+    logger.info("Build gold stage started", extra=task_run_context(task, "pipeline.build_gold", "start"))
     source = review_results_path or task.path_for("review_results")
-    review_records = read_jsonl(source)
+    review_records = load_review_records(task.project_root, task_name=task.name, run_id=task.run_id)
+    if not review_records:
+        logger.warning(
+            "Build gold stage has no review records",
+            extra=task_run_context(
+                task,
+                "pipeline.build_gold",
+                "degrade",
+                error_code="BUILD_GOLD_NO_REVIEWS",
+                input_path=source,
+            ),
+        )
     validate_review_records(review_records)
-    classified_samples = read_jsonl(task.path_for("teacher_labeled"))
+    classified_samples = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="teacher_labeled",
+    )
     sample_map = {sample["id"]: sample for sample in classified_samples}
     gold_samples = []
     hard_cases = []
@@ -22,6 +45,16 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
     for sample_id, records in grouped_reviews.items():
         sample = sample_map.get(sample_id)
         if sample is None:
+            logger.error(
+                "Build gold found a review for an unknown sample",
+                extra=task_run_context(
+                    task,
+                    "pipeline.build_gold",
+                    "error",
+                    error_code="BUILD_GOLD_UNKNOWN_SAMPLE",
+                    sample_id=sample_id,
+                ),
+            )
             raise ValueError(f"Review sample_id not found in teacher_labeled set: {sample_id}")
 
         reviewed_sample = merge_review_records(sample, records)
@@ -61,12 +94,38 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
                 }
             )
 
+    if not gold_samples:
+        logger.warning(
+            "Build gold produced no gold samples",
+            extra=task_run_context(
+                task,
+                "pipeline.build_gold",
+                "degrade",
+                error_code="BUILD_GOLD_NO_SAMPLES",
+                review_records=len(review_records),
+            ),
+        )
+
     validate_samples(gold_samples)
     gold_path = task.path_for("gold_eval")
     hard_cases_path = task.path_for("hard_cases")
     hard_cases_metadata_path = task.path_for("hard_cases_metadata")
-    write_jsonl(gold_path, gold_samples)
-    write_jsonl(hard_cases_path, hard_cases)
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="gold_eval",
+        records=gold_samples,
+    )
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="hard_cases",
+        records=hard_cases,
+    )
     hard_cases_version = build_dataset_version_summary(
         task_name=task.name,
         run_id=task.run_id,
@@ -92,7 +151,14 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
             },
         },
     )
-    write_json(hard_cases_metadata_path, hard_cases_version)
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="hard_cases_metadata",
+        payload=hard_cases_version,
+    )
     manifest_path = task.path_for("build_gold_manifest")
     manifest = write_run_manifest(
         manifest_path,
@@ -106,4 +172,15 @@ def run(task: TaskRun, *, review_results_path: Path | None = None) -> dict[str, 
         run_id=task.run_id,
     )
     task.record_stage("build_gold", manifest, manifest_path)
+    logger.info(
+        "Build gold stage completed",
+        extra=task_run_context(
+            task,
+            "pipeline.build_gold",
+            "end",
+            review_records=len(review_records),
+            gold_samples=len(gold_samples),
+            hard_cases=len(hard_cases),
+        ),
+    )
     return {"gold_eval": gold_path, "hard_cases": hard_cases_path, "hard_cases_metadata": hard_cases_metadata_path}

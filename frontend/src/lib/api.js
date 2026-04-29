@@ -1,5 +1,16 @@
+export function resolveApiUrl(path) {
+  const baseUrl =
+    window.dataforgeDesktop?.backendBaseUrl ||
+    import.meta.env.VITE_API_BASE_URL ||
+    "";
+  if (!baseUrl) {
+    return path;
+  }
+  return `${String(baseUrl).replace(/\/$/, "")}${path}`;
+}
+
 export function api(path, options = {}) {
-  return fetch(path, {
+  return fetch(resolveApiUrl(path), {
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),

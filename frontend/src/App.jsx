@@ -8,7 +8,7 @@ import React, {
 } from "react";
 
 import { DEFAULT_CREATE_TASK, STAGE_ACTIONS, WORKSPACE_TABS } from "./constants/app.js";
-import { api } from "./lib/api.js";
+import { api, resolveApiUrl } from "./lib/api.js";
 import {
   buildArtifactSummary,
   createDefaultArtifactKey,
@@ -51,7 +51,27 @@ import OverviewWorkspace from "./modules/workspace/OverviewWorkspace.jsx";
 const STRUCTURED_ARTIFACT_PAGE_SIZE = 24;
 const RAW_ARTIFACT_LINE_PAGE_SIZE = 120;
 
+function getTaskConfigCardLabel(cardKey) {
+  if (cardKey === "task") {
+    return "Task Dossier";
+  }
+  if (cardKey === "rules-exports") {
+    return "Rules & Exports";
+  }
+  if (cardKey === "prompt-view") {
+    return "Prompt View";
+  }
+  if (cardKey === "scenarios") {
+    return "Scenario Cards";
+  }
+  if (cardKey.startsWith("runtime-")) {
+    return cardKey.replace("runtime-", "");
+  }
+  return "当前卡片";
+}
+
 function App() {
+  const [desktopInfo, setDesktopInfo] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [screen, setScreen] = useState("home");
   const [activeTask, setActiveTask] = useState(null);
@@ -86,17 +106,18 @@ function App() {
   const [reviewFilter, setReviewFilter] = useState("all");
   const [message, setMessage] = useState("正在连接 DataForge");
   const [messageTone, setMessageTone] = useState("neutral");
+  const [errorDialog, setErrorDialog] = useState("");
   const [booting, setBooting] = useState(true);
   const [busyCommand, setBusyCommand] = useState("");
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
-  const [savingTaskConfig, setSavingTaskConfig] = useState(false);
+  const [savingTaskConfigCard, setSavingTaskConfigCard] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [testingProvider, setTestingProvider] = useState("");
   const [llmTests, setLlmTests] = useState({});
   const [promptFocus, setPromptFocus] = useState("generator");
   const [isEditingTaskConfig, setIsEditingTaskConfig] = useState(false);
-  const [configViewMode, setConfigViewMode] = useState("visual");
+  const [editingTaskConfigCard, setEditingTaskConfigCard] = useState("");
   const [runtimeCustomModes, setRuntimeCustomModes] = useState({});
   const [expandedRuntimeStages, setExpandedRuntimeStages] = useState({
     generator: false,
@@ -267,7 +288,9 @@ function App() {
     if (!activeTask?.name || !selectedRun?.run_id || artifactKey !== "student_train") {
       return null;
     }
-    return `/api/tasks/${activeTask.name}/runs/${selectedRun.run_id}/artifacts/${artifactKey}/download`;
+    return resolveApiUrl(
+      `/api/tasks/${activeTask.name}/runs/${selectedRun.run_id}/artifacts/${artifactKey}/download`
+    );
   }, [activeTask?.name, artifactKey, selectedRun?.run_id]);
 
   const recommendedArtifactKeys = useMemo(
@@ -359,6 +382,13 @@ function App() {
   }, [llmTests, settingsDraft.providers]);
 
   function setFlashMessage(text, tone = "neutral") {
+    if (tone === "error") {
+      setErrorDialog(text);
+      setMessage("操作失败");
+      setMessageTone("warning");
+      return;
+    }
+    setErrorDialog("");
     setMessage(text);
     setMessageTone(tone);
   }
@@ -374,12 +404,29 @@ function App() {
   const loadBoot = useCallback(async () => {
     setBooting(true);
     try {
-      const [taskPayload, settingsPayload] = await Promise.all([api("/api/tasks"), api("/api/settings/llm")]);
+      const desktopInfoPromise =
+        window.dataforgeDesktop?.getAppInfo?.().catch(() => null) || Promise.resolve(null);
+      const [taskPayload, settingsPayload, nextDesktopInfo] = await Promise.all([
+        api("/api/tasks"),
+        api("/api/settings/llm"),
+        desktopInfoPromise,
+      ]);
       const nextTasks = taskPayload.items || [];
       const normalizedSettings = normalizeSettingsPayload(settingsPayload);
+      setDesktopInfo(nextDesktopInfo);
       setTasks(nextTasks);
       setSettings(normalizedSettings);
       setSettingsDraft(deepClone(normalizedSettings));
+      if (nextDesktopInfo?.workspaceState?.justCreated) {
+        setMessage("已初始化 DataForge 工作区");
+        setMessageTone("success");
+      } else if (nextDesktopInfo?.workspaceState?.needsOnboarding) {
+        setMessage("工作区已就绪，等待首个 Run");
+        setMessageTone("warning");
+      } else {
+        setMessage("DataForge 已连接");
+        setMessageTone("success");
+      }
       if (activeTask) {
         const stillExists = nextTasks.find((item) => item.name === activeTask.name);
         if (!stillExists) {
@@ -396,6 +443,21 @@ function App() {
       setBooting(false);
     }
   }, [activeTask]);
+
+  async function openDesktopPath(targetPath, label) {
+    if (!targetPath || !window.dataforgeDesktop?.openPath) {
+      return;
+    }
+    try {
+      const error = await window.dataforgeDesktop.openPath(targetPath);
+      if (error) {
+        throw new Error(error);
+      }
+      setFlashMessage(`已打开${label}`, "success");
+    } catch (error) {
+      setFlashMessage(error instanceof Error ? error.message : `打开${label}失败`, "error");
+    }
+  }
 
   const loadRun = useCallback(async (taskName, runId) => {
     if (!taskName || !runId) {
@@ -656,11 +718,64 @@ function App() {
     }
   }
 
-  async function handleSaveTaskConfig() {
+  function revertTaskConfigCard(cardKey) {
+    if (!taskConfigBaseline) {
+      return;
+    }
+    setTaskConfigDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      if (cardKey === "task") {
+        return { ...current, task: deepClone(taskConfigBaseline.task) };
+      }
+      if (cardKey === "rules-exports") {
+        return {
+          ...current,
+          rulesText: taskConfigBaseline.rulesText,
+          exportsText: taskConfigBaseline.exportsText,
+          labelsText: taskConfigBaseline.labelsText,
+        };
+      }
+      if (cardKey === "prompt-view") {
+        return {
+          ...current,
+          generatorPrompt: taskConfigBaseline.generatorPrompt,
+          teacherPrompt: taskConfigBaseline.teacherPrompt,
+        };
+      }
+      if (cardKey === "scenarios") {
+        return {
+          ...current,
+          scenariosText: taskConfigBaseline.scenariosText,
+        };
+      }
+      if (cardKey.startsWith("runtime-")) {
+        const stage = cardKey.replace("runtime-", "");
+        const currentRuntime = safeParseJson(current.runtimeText || "{}", {});
+        const baselineRuntime = safeParseJson(taskConfigBaseline.runtimeText || "{}", {});
+        return {
+          ...current,
+          runtimeText: JSON.stringify(
+            {
+              ...currentRuntime,
+              [stage]: deepClone(baselineRuntime?.[stage] || {}),
+            },
+            null,
+            2
+          ),
+        };
+      }
+      return deepClone(taskConfigBaseline);
+    });
+    setFlashMessage(`${getTaskConfigCardLabel(cardKey)} 已回退`, "warning");
+  }
+
+  async function handleSaveTaskConfig(cardKey = "task") {
     if (!activeTask?.name || !taskConfigDraft) {
       return;
     }
-    setSavingTaskConfig(true);
+    setSavingTaskConfigCard(cardKey);
     try {
       const payload = buildTaskConfigPayloadFromDraft(taskConfigDraft);
       const response = await api(`/api/tasks/${activeTask.name}/config-files`, {
@@ -672,13 +787,13 @@ function App() {
       setTaskSpec(response.spec);
       setTaskConfigDraft(nextDraft);
       setTaskConfigBaseline(nextDraft);
-      setIsEditingTaskConfig(false);
+      setEditingTaskConfigCard("");
       await loadBoot();
-      setFlashMessage("Task 配置已保存", "success");
+      setFlashMessage(`${getTaskConfigCardLabel(cardKey)} 已保存`, "success");
     } catch (error) {
       setFlashMessage(error.message, "error");
     } finally {
-      setSavingTaskConfig(false);
+      setSavingTaskConfigCard("");
     }
   }
 
@@ -1090,6 +1205,32 @@ function App() {
             <div className={classNames("message-pill", messageTone && `is-${messageTone}`)}>
               {message}
             </div>
+            {desktopInfo ? (
+              <div className="desktop-quick-actions">
+                <span
+                  className={classNames(
+                    "micro-chip",
+                    desktopInfo.isPackaged ? "is-success" : "is-warning"
+                  )}
+                >
+                  {desktopInfo.isPackaged ? "桌面版" : "开发壳"}
+                </span>
+                <button
+                  className="ghost-button compact-ghost-button"
+                  type="button"
+                  onClick={() => openDesktopPath(desktopInfo.workspaceRoot, "工作区")}
+                >
+                  工作区
+                </button>
+                <button
+                  className="ghost-button compact-ghost-button"
+                  type="button"
+                  onClick={() => openDesktopPath(desktopInfo.logFilePath, "日志文件")}
+                >
+                  日志
+                </button>
+              </div>
+            ) : null}
             <button
               className="gear-button"
               type="button"
@@ -1105,6 +1246,7 @@ function App() {
 
       {screen === "home" ? (
         <HomeScreen
+          desktopInfo={desktopInfo}
           tasks={tasks}
           settings={settings}
           booting={booting}
@@ -1112,6 +1254,7 @@ function App() {
           onOpenTask={openTask}
           onOpenCreateTask={() => setCreateTaskOpen(true)}
           onDeleteTask={handleDeleteTask}
+          onOpenDesktopPath={openDesktopPath}
         />
       ) : (
         <main className="workspace-screen">
@@ -1318,14 +1461,15 @@ function App() {
                   taskConfigDraft={taskConfigDraft}
                   isEditingTaskConfig={isEditingTaskConfig}
                   setIsEditingTaskConfig={setIsEditingTaskConfig}
-                  configViewMode={configViewMode}
-                  setConfigViewMode={setConfigViewMode}
+                  editingTaskConfigCard={editingTaskConfigCard}
+                  setEditingTaskConfigCard={setEditingTaskConfigCard}
                   taskConfigBaseline={taskConfigBaseline}
                   setTaskConfigDraft={setTaskConfigDraft}
                   setPromptFocus={setPromptFocus}
                   setFlashMessage={setFlashMessage}
-                  savingTaskConfig={savingTaskConfig}
+                  savingTaskConfigCard={savingTaskConfigCard}
                   onSaveTaskConfig={handleSaveTaskConfig}
+                  onRevertTaskConfigCard={revertTaskConfigCard}
                   configSummaryCards={configSummaryCards}
                   taskConfigDirty={taskConfigDirty}
                   configAdvice={configAdvice}
@@ -1369,6 +1513,7 @@ function App() {
 
       {settingsOpen ? (
         <SettingsDrawer
+          desktopInfo={desktopInfo}
           settings={settings}
           settingsDraft={settingsDraft}
           settingsView={settingsView}
@@ -1396,7 +1541,39 @@ function App() {
           updateProvider={updateProvider}
           updateCustomProviderDraft={updateCustomProviderDraft}
           setFlashMessage={setFlashMessage}
+          onOpenDesktopPath={openDesktopPath}
         />
+      ) : null}
+
+      {errorDialog ? (
+        <div className="overlay" role="presentation" onClick={() => setErrorDialog("")}>
+          <div
+            className="modal-card error-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="error-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-head">
+              <div>
+                <span className="eyebrow">Action Failed</span>
+                <h2 id="error-dialog-title">操作失败</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setErrorDialog("")}>
+                关闭
+              </button>
+            </div>
+            <div className="error-dialog-body">
+              <p>这次操作没有执行成功。请先处理下面这条错误，再继续当前步骤。</p>
+              <pre className="error-dialog-message">{errorDialog}</pre>
+            </div>
+            <div className="modal-actions">
+              <button className="primary-button" type="button" onClick={() => setErrorDialog("")}>
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

@@ -1,18 +1,41 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from dataforge.core.dedupe import dedupe_samples, exclude_historical_leakage
 from dataforge.core.exporters import export_train_dataset
 from dataforge.core.filters import filter_classified_samples
-from dataforge.core.io import read_jsonl, read_yaml, write_json, write_jsonl, write_run_manifest
+from dataforge.core.io import read_yaml, write_run_manifest
+from dataforge.core.logging_config import task_run_context
 from dataforge.core.registry import TaskRun
+from dataforge.core.storage import load_artifact_records, save_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 
 
+logger = logging.getLogger(__name__)
+
+
 def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
+    logger.info("Filter export stage started", extra=task_run_context(task, "pipeline.filter_export", "start"))
     source = input_path or task.path_for("teacher_labeled")
-    classified = read_jsonl(source)
+    classified = load_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        run_id=task.run_id,
+        artifact_key="teacher_labeled",
+    )
+    if not classified:
+        logger.warning(
+            "Filter export stage has no classified samples",
+            extra=task_run_context(
+                task,
+                "pipeline.filter_export",
+                "degrade",
+                error_code="FILTER_NO_INPUT",
+                input_path=source,
+            ),
+        )
     labels = set(read_yaml(task.path_for("labels"))["labels"])
 
     filtered = filter_classified_samples(
@@ -24,6 +47,41 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
     train_samples = [sample for sample in filtered.kept if sample["id"] not in review_ids]
     historical_leakage = exclude_historical_leakage(task, train_samples)
     train_samples = historical_leakage.kept
+    if filtered.rejected:
+        logger.warning(
+            "Filter export rejected classified samples",
+            extra=task_run_context(
+                task,
+                "pipeline.filter_export",
+                "degrade",
+                error_code="FILTER_REJECTED_SAMPLES",
+                rejected=len(filtered.rejected),
+                input_samples=len(classified),
+            ),
+        )
+    if historical_leakage.summary["blocked_count"]:
+        logger.warning(
+            "Filter export blocked historical leakage",
+            extra=task_run_context(
+                task,
+                "pipeline.filter_export",
+                "degrade",
+                error_code="FILTER_HISTORICAL_LEAKAGE",
+                blocked=historical_leakage.summary["blocked_count"],
+            ),
+        )
+    if not train_samples:
+        logger.warning(
+            "Filter export produced no train samples",
+            extra=task_run_context(
+                task,
+                "pipeline.filter_export",
+                "degrade",
+                error_code="FILTER_NO_TRAIN_SAMPLES",
+                input_samples=len(classified),
+                review_pool=len(filtered.review_pool),
+            ),
+        )
 
     filtered_train_path = task.path_for("filtered_train")
     train_export_path = task.path_for("train_export")
@@ -32,7 +90,31 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
     rejected_path = task.path_for("rejected_samples")
     promptfoo_eval_path = task.path_for("eval_for_promptfoo")
 
-    write_jsonl(filtered_train_path, train_samples)
+    rejected_rows = [*filtered.rejected, *historical_leakage.blocked]
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="filtered_train",
+        records=train_samples,
+    )
+    save_artifact_records(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="rejected_samples",
+        records=rejected_rows,
+    )
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="labelstudio_import",
+        payload=filtered.review_pool,
+    )
     train_export_summary = export_train_dataset(
         train_export_path,
         train_samples,
@@ -45,7 +127,7 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         dataset_name="train-export-audit",
         format_name=train_export_summary["format"],
         sample_count=train_export_summary["sample_count"],
-        source_paths=[str(source), str(filtered_train_path)],
+        source_paths=[str(source)],
         extra={
             "artifact_role": "audit_export",
             "is_final_sft_dataset": False,
@@ -55,10 +137,14 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
             "note": "此文件用于审计和通用导出检查；最终可直接微调的交付物由 student-export 生成。",
         },
     )
-    write_json(train_export_metadata_path, train_version_summary)
-    write_json(review_json_path, filtered.review_pool)
-    write_jsonl(rejected_path, [*filtered.rejected, *historical_leakage.blocked])
-    write_jsonl(promptfoo_eval_path, [])
+    save_blob_artifact(
+        task.project_root,
+        task_name=task.name,
+        task_root=task.task_root,
+        run_id=task.run_id,
+        artifact_key="train_export_metadata",
+        payload=train_version_summary,
+    )
 
     manifest_path = task.path_for("filter_manifest")
     manifest = write_run_manifest(
@@ -93,6 +179,20 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         run_id=task.run_id,
     )
     task.record_stage("filter_export", manifest, manifest_path)
+    logger.info(
+        "Filter export stage completed",
+        extra=task_run_context(
+            task,
+            "pipeline.filter_export",
+            "end",
+            input_samples=len(classified),
+            kept=len(filtered.kept),
+            rejected=len(filtered.rejected),
+            review_pool=len(filtered.review_pool),
+            train_samples=len(train_samples),
+            historical_leakage_blocked=historical_leakage.summary["blocked_count"],
+        ),
+    )
     return {
         "filtered_train": filtered_train_path,
         "train_export": train_export_path,
