@@ -93,6 +93,29 @@ def _parse_json_payload(content: str) -> Any:
         raise AnthropicCompatibleError(f"Provider returned non-JSON content: {content}") from exc
 
 
+def _parse_generator_payload(content: str) -> dict[str, Any]:
+    try:
+        payload = _parse_json_payload(content)
+    except AnthropicCompatibleError:
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if not lines:
+            raise
+        items: list[dict[str, Any]] = []
+        try:
+            for line in lines:
+                parsed = json.loads(line)
+                if not isinstance(parsed, dict):
+                    raise ValueError("generator line is not an object")
+                items.append(parsed)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise AnthropicCompatibleError(f"Provider returned non-JSON content: {content}") from exc
+        return {"items": items}
+
+    if isinstance(payload, dict):
+        return payload
+    raise AnthropicCompatibleError(f"Generator response must be a JSON object: {payload}")
+
+
 def _normalize_generator_items(payload: dict[str, Any]) -> list[Any]:
     items = payload.get("items")
     if isinstance(items, list):
@@ -387,7 +410,7 @@ class AnthropicCompatibleGeneratorProvider(GeneratorProvider):
         counter = 1
         for scenario in scenarios:
             content = self.client.complete(runtime, _build_generator_messages(task, scenario))
-            payload = _parse_json_payload(content)
+            payload = _parse_generator_payload(content)
             for item in _normalize_generator_items(payload):
                 if isinstance(item, str):
                     user_text = item.strip()

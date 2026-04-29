@@ -1400,6 +1400,8 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             raise _http_400(str(exc)) from exc
         except ValueError as exc:
             raise _http_400(str(exc)) from exc
+        except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
+            raise _http_400(str(exc)) from exc
 
         return {
             "ok": True,

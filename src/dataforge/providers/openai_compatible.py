@@ -255,6 +255,43 @@ def _parse_json_payload(content: str) -> Any:
         raise OpenAICompatibleError(f"Provider returned non-JSON content: {content}") from exc
 
 
+def _parse_generator_payload(content: str) -> dict[str, Any]:
+    try:
+        payload = _parse_json_payload(content)
+    except OpenAICompatibleError:
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if not lines:
+            raise
+        items: list[dict[str, Any]] = []
+        try:
+            for line in lines:
+                parsed = json.loads(line)
+                if not isinstance(parsed, dict):
+                    raise ValueError("generator line is not an object")
+                items.append(parsed)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise OpenAICompatibleError(f"Provider returned non-JSON content: {content}") from exc
+        return {"items": items}
+
+    if isinstance(payload, dict):
+        return payload
+    raise OpenAICompatibleError(f"Generator response must be a JSON object: {payload}")
+
+
+def _normalize_generator_items(payload: dict[str, Any]) -> list[Any]:
+    items = payload.get("items")
+    if isinstance(items, list):
+        return items
+
+    user_text = payload.get("user_text")
+    if isinstance(user_text, list):
+        return user_text
+    if isinstance(user_text, str) and user_text.strip():
+        return [user_text]
+
+    raise OpenAICompatibleError(f"Generator response missing items list: {payload}")
+
+
 def _build_generator_messages(task: TaskConfig, scenario: dict[str, Any]) -> list[dict[str, str]]:
     generator_prompt = read_text(task.path_for("generator_prompt")).strip()
     count = scenario.get("generation_count") or max(len(scenario.get("templates", [])), 1)
@@ -318,12 +355,14 @@ class OpenAICompatibleGeneratorProvider(GeneratorProvider):
         counter = 1
         for scenario in scenarios:
             content = self.client.complete(runtime, _build_generator_messages(task, scenario))
-            payload = _parse_json_payload(content)
-            items = payload.get("items")
-            if not isinstance(items, list):
-                raise OpenAICompatibleError(f"Generator response missing items list: {payload}")
-            for item in items:
-                user_text = str(item.get("user_text", "")).strip()
+            payload = _parse_generator_payload(content)
+            for item in _normalize_generator_items(payload):
+                if isinstance(item, str):
+                    user_text = item.strip()
+                elif isinstance(item, dict):
+                    user_text = str(item.get("user_text", "")).strip()
+                else:
+                    user_text = ""
                 if not user_text:
                     continue
                 samples.append(

@@ -105,6 +105,7 @@ function App() {
   const [reviewFilter, setReviewFilter] = useState("all");
   const [message, setMessage] = useState("正在连接 DataForge");
   const [messageTone, setMessageTone] = useState("neutral");
+  const [errorDialog, setErrorDialog] = useState("");
   const [booting, setBooting] = useState(true);
   const [busyCommand, setBusyCommand] = useState("");
   const [artifactLoading, setArtifactLoading] = useState(false);
@@ -378,6 +379,13 @@ function App() {
   }, [llmTests, settingsDraft.providers]);
 
   function setFlashMessage(text, tone = "neutral") {
+    if (tone === "error") {
+      setErrorDialog(text);
+      setMessage("操作失败");
+      setMessageTone("warning");
+      return;
+    }
+    setErrorDialog("");
     setMessage(text);
     setMessageTone(tone);
   }
@@ -1470,6 +1478,37 @@ function App() {
           updateCustomProviderDraft={updateCustomProviderDraft}
           setFlashMessage={setFlashMessage}
         />
+      ) : null}
+
+      {errorDialog ? (
+        <div className="overlay" role="presentation" onClick={() => setErrorDialog("")}>
+          <div
+            className="modal-card error-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="error-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-head">
+              <div>
+                <span className="eyebrow">Action Failed</span>
+                <h2 id="error-dialog-title">操作失败</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setErrorDialog("")}>
+                关闭
+              </button>
+            </div>
+            <div className="error-dialog-body">
+              <p>这次操作没有执行成功。请先处理下面这条错误，再继续当前步骤。</p>
+              <pre className="error-dialog-message">{errorDialog}</pre>
+            </div>
+            <div className="modal-actions">
+              <button className="primary-button" type="button" onClick={() => setErrorDialog("")}>
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

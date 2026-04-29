@@ -2369,6 +2369,37 @@ select:focus-visible {
   width: min(640px, 100%);
 }
 
+.error-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.error-dialog-body {
+  display: grid;
+  gap: 14px;
+}
+
+.error-dialog-body p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.error-dialog-message {
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(212, 95, 105, 0.22);
+  border-radius: 24px;
+  background: rgba(255, 245, 247, 0.92);
+  color: #7d2d38;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: min(42vh, 360px);
+  overflow: auto;
+}
+
 .settings-drawer {
   width: min(760px, 100%);
   max-height: calc(100vh - 48px);
