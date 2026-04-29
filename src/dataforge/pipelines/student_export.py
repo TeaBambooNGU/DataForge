@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from dataforge.core.exporters import export_train_dataset
 from dataforge.core.io import write_run_manifest
+from dataforge.core.logging_config import task_run_context
 from dataforge.core.registry import TaskRun
 from dataforge.core.storage import load_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 
 
+logger = logging.getLogger(__name__)
+
+
 def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
+    logger.info("Student export stage started", extra=task_run_context(task, "pipeline.student_export", "start"))
     source = input_path or task.path_for("filtered_train")
     samples = load_artifact_records(
         task.project_root,
@@ -17,6 +23,17 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         run_id=task.run_id,
         artifact_key="filtered_train",
     )
+    if not samples:
+        logger.warning(
+            "Student export stage has no train samples",
+            extra=task_run_context(
+                task,
+                "pipeline.student_export",
+                "degrade",
+                error_code="STUDENT_EXPORT_NO_SAMPLES",
+                input_path=source,
+            ),
+        )
     student_train_path = task.path_for("student_train")
     training_metadata_path = task.path_for("training_metadata")
     student_format = task.exports.get("student_format") or task.exports.get("train_format") or "chatml_jsonl"
@@ -79,6 +96,18 @@ def run(task: TaskRun, *, input_path: Path | None = None) -> dict[str, Path]:
         run_id=task.run_id,
     )
     task.record_stage("student_export", manifest, manifest_path)
+    logger.info(
+        "Student export stage completed",
+        extra=task_run_context(
+            task,
+            "pipeline.student_export",
+            "end",
+            samples=len(samples),
+            student_format=student_export_summary["format"],
+            has_sft_system_prompt=bool((system_prompt or "").strip()),
+            output_path=student_train_path,
+        ),
+    )
     return {
         "student_train": student_train_path,
         "training_metadata": training_metadata_path,

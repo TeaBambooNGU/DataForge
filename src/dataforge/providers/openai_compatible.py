@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -8,12 +9,16 @@ from typing import Any
 from urllib import error, request
 
 from dataforge.core.io import read_text, read_yaml
+from dataforge.core.logging_config import log_context
 from dataforge.core.registry import TaskConfig
 from dataforge.providers.base import EvalProvider, GeneratorProvider, TeacherProvider
 
 
 class OpenAICompatibleError(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class RetryableOpenAICompatibleError(OpenAICompatibleError):
@@ -107,8 +112,28 @@ class OpenAICompatibleChatClient:
         timeout = runtime.get("timeout_seconds", 60)
 
         if not api_key:
+            logger.error(
+                "OpenAI-compatible runtime is missing an API key",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_MISSING_API_KEY",
+                    api_key_env=api_key_env,
+                    model=model,
+                    base_url=base_url,
+                ),
+            )
             raise OpenAICompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
         if not model:
+            logger.error(
+                "OpenAI-compatible runtime is missing a model",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_MISSING_MODEL",
+                    base_url=base_url,
+                ),
+            )
             raise OpenAICompatibleError("runtime.model is required for openai_compatible provider")
 
         payload = _merge_optional_runtime_fields(
@@ -143,6 +168,17 @@ class OpenAICompatibleChatClient:
                     else f"{message} [retryable after {retry_after}s]",
                     retry_after=retry_after,
                 ) from exc
+            logger.error(
+                "OpenAI-compatible endpoint returned a non-retryable HTTP error",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_HTTP_ERROR",
+                    status_code=exc.code,
+                    model=model,
+                    base_url=base_url,
+                ),
+            )
             raise OpenAICompatibleError(message) from exc
         except error.URLError as exc:
             raise RetryableOpenAICompatibleError(
@@ -164,8 +200,34 @@ class OpenAICompatibleChatClient:
                 last_error = exc
                 if attempt >= max_retries:
                     break
-                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+                delay = _backoff_seconds(runtime, attempt, exc.retry_after)
+                logger.warning(
+                    "OpenAI-compatible request will be retried",
+                    extra=log_context(
+                        "provider.openai",
+                        "retry",
+                        error_code="OPENAI_REQUEST_RETRY",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay,
+                        model=runtime.get("model"),
+                        base_url=runtime.get("base_url") or os.environ.get(runtime.get("base_url_env", "OPENAI_BASE_URL")),
+                        error_type=type(exc).__name__,
+                    ),
+                )
+                self._sleeper(delay)
         if last_error is not None:
+            logger.error(
+                "OpenAI-compatible request failed after retries",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_REQUEST_FAILED",
+                    max_retries=max_retries,
+                    model=runtime.get("model"),
+                    error_type=type(last_error).__name__,
+                ),
+            )
             raise OpenAICompatibleError(str(last_error)) from last_error
         raise OpenAICompatibleError("OpenAI-compatible request failed without an explicit error")
 
@@ -177,6 +239,16 @@ class OpenAICompatibleChatClient:
         timeout = runtime.get("timeout_seconds", 60)
 
         if not api_key:
+            logger.error(
+                "OpenAI-compatible models request is missing an API key",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_MODELS_MISSING_API_KEY",
+                    api_key_env=api_key_env,
+                    base_url=base_url,
+                ),
+            )
             raise OpenAICompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
 
         req = request.Request(
@@ -201,6 +273,16 @@ class OpenAICompatibleChatClient:
                     else f"{message} [retryable after {retry_after}s]",
                     retry_after=retry_after,
                 ) from exc
+            logger.error(
+                "OpenAI-compatible models endpoint returned a non-retryable HTTP error",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_MODELS_HTTP_ERROR",
+                    status_code=exc.code,
+                    base_url=base_url,
+                ),
+            )
             raise OpenAICompatibleError(message) from exc
         except error.URLError as exc:
             raise RetryableOpenAICompatibleError(
@@ -242,8 +324,32 @@ class OpenAICompatibleChatClient:
                 last_error = exc
                 if attempt >= max_retries:
                     break
-                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+                delay = _backoff_seconds(runtime, attempt, exc.retry_after)
+                logger.warning(
+                    "OpenAI-compatible models request will be retried",
+                    extra=log_context(
+                        "provider.openai",
+                        "retry",
+                        error_code="OPENAI_MODELS_RETRY",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay,
+                        base_url=runtime.get("base_url") or os.environ.get(runtime.get("base_url_env", "OPENAI_BASE_URL")),
+                        error_type=type(exc).__name__,
+                    ),
+                )
+                self._sleeper(delay)
         if last_error is not None:
+            logger.error(
+                "OpenAI-compatible models request failed after retries",
+                extra=log_context(
+                    "provider.openai",
+                    "error",
+                    error_code="OPENAI_MODELS_FAILED",
+                    max_retries=max_retries,
+                    error_type=type(last_error).__name__,
+                ),
+            )
             raise OpenAICompatibleError(str(last_error)) from last_error
         raise OpenAICompatibleError("OpenAI-compatible models request failed without an explicit error")
 
@@ -395,10 +501,31 @@ class OpenAICompatibleTeacherProvider(TeacherProvider):
         try:
             payload = _parse_json_payload(content)
         except OpenAICompatibleError:
+            logger.warning(
+                "OpenAI-compatible teacher returned invalid JSON",
+                extra=log_context(
+                    "provider.openai",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="OPENAI_TEACHER_INVALID_JSON",
+                    sample_id=sample.get("id"),
+                    output_chars=len(content),
+                ),
+            )
             return False, None, content, "invalid_teacher_output"
 
         action = payload.get("action")
         if not isinstance(action, str) or not action.strip():
+            logger.warning(
+                "OpenAI-compatible teacher response is missing action",
+                extra=log_context(
+                    "provider.openai",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="OPENAI_TEACHER_MISSING_ACTION",
+                    sample_id=sample.get("id"),
+                ),
+            )
             return False, None, content, "missing_action"
         return True, action.strip(), content, None
 
@@ -413,9 +540,30 @@ class OpenAICompatibleEvalProvider(EvalProvider):
         try:
             payload = _parse_json_payload(content)
         except OpenAICompatibleError:
+            logger.warning(
+                "OpenAI-compatible eval returned invalid JSON",
+                extra=log_context(
+                    "provider.openai",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="OPENAI_EVAL_INVALID_JSON",
+                    sample_id=sample.get("id"),
+                    output_chars=len(content),
+                ),
+            )
             return False, None, content, "invalid_eval_output"
 
         action = payload.get("action")
         if not isinstance(action, str) or not action.strip():
+            logger.warning(
+                "OpenAI-compatible eval response is missing action",
+                extra=log_context(
+                    "provider.openai",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="OPENAI_EVAL_MISSING_ACTION",
+                    sample_id=sample.get("id"),
+                ),
+            )
             return False, None, content, "missing_action"
         return True, action.strip(), content, None

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800">
+  <defs>
+    <linearGradient id="bg" x1="12%" x2="88%" y1="10%" y2="90%">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="42%" stop-color="#e7f2ff"/>
+      <stop offset="100%" stop-color="#d7f5ee"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.52"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="20%" x2="80%" y1="14%" y2="84%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="800" fill="url(#bg)"/>
+  <circle cx="1110" cy="118" r="210" fill="#60a5fa" fill-opacity="0.14"/>
+  <circle cx="124" cy="720" r="248" fill="#2dd4bf" fill-opacity="0.12"/>
+  <rect x="72" y="80" width="516" height="640" rx="40" fill="url(#panel)" stroke="#ffffff" stroke-opacity="0.85"/>
+
+  <rect x="132" y="136" width="150" height="150" rx="36" fill="url(#accent)"/>
+  <text x="207" y="230" text-anchor="middle" font-family="Sora, Arial, sans-serif" font-weight="700" font-size="66" fill="#f8fafc" letter-spacing="10">DF</text>
+
+  <text x="132" y="360" font-family="Sora, Arial, sans-serif" font-weight="700" font-size="62" fill="#0f172a">DataForge</text>
+  <text x="132" y="414" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#31506d">Local pipeline workbench for offline distillation.</text>
+
+  <text x="132" y="520" font-family="Sora, Arial, sans-serif" font-weight="600" font-size="34" fill="#14345f">Install</text>
+  <text x="132" y="566" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#46637f">
+    Drag the DataForge app to Applications
+  </text>
+  <text x="132" y="604" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#46637f">
+    and launch it from your Applications folder.
+  </text>
+
+  <path d="M670 404h470" fill="none" stroke="#7dd3fc" stroke-width="18" stroke-linecap="round" stroke-dasharray="2 34" opacity="0.68"/>
+  <path d="M1130 404l-34-28v56l34-28Z" fill="#0d9488" opacity="0.86"/>
+</svg>

@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Any
 from urllib import error, request
 
 from dataforge.core.io import read_text, read_yaml
+from dataforge.core.logging_config import log_context
 from dataforge.core.registry import TaskConfig
 from dataforge.providers.base import EvalProvider, GeneratorProvider, TeacherProvider
 
 
 class AnthropicCompatibleError(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class RetryableAnthropicCompatibleError(AnthropicCompatibleError):
@@ -228,8 +233,28 @@ class AnthropicCompatibleClient:
         timeout = runtime.get("timeout_seconds", 60)
 
         if not api_key:
+            logger.error(
+                "Anthropic-compatible runtime is missing an API key",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_MISSING_API_KEY",
+                    api_key_env=api_key_env,
+                    model=model,
+                    base_url=base_url,
+                ),
+            )
             raise AnthropicCompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
         if not model:
+            logger.error(
+                "Anthropic-compatible runtime is missing a model",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_MISSING_MODEL",
+                    base_url=base_url,
+                ),
+            )
             raise AnthropicCompatibleError("runtime.model is required for anthropic_compatible provider")
 
         system, normalized_messages = _split_system_messages(messages)
@@ -279,6 +304,17 @@ class AnthropicCompatibleClient:
                     else f"{message} [retryable after {retry_after}s]",
                     retry_after=retry_after,
                 ) from exc
+            logger.error(
+                "Anthropic-compatible endpoint returned a non-retryable HTTP error",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_HTTP_ERROR",
+                    status_code=exc.code,
+                    model=model,
+                    base_url=base_url,
+                ),
+            )
             raise AnthropicCompatibleError(message) from exc
         except error.URLError as exc:
             raise RetryableAnthropicCompatibleError(
@@ -297,8 +333,34 @@ class AnthropicCompatibleClient:
                 last_error = exc
                 if attempt >= max_retries:
                     break
-                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+                delay = _backoff_seconds(runtime, attempt, exc.retry_after)
+                logger.warning(
+                    "Anthropic-compatible request will be retried",
+                    extra=log_context(
+                        "provider.anthropic",
+                        "retry",
+                        error_code="ANTHROPIC_REQUEST_RETRY",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay,
+                        model=runtime.get("model"),
+                        base_url=runtime.get("base_url") or os.environ.get(runtime.get("base_url_env", "ANTHROPIC_BASE_URL")),
+                        error_type=type(exc).__name__,
+                    ),
+                )
+                self._sleeper(delay)
         if last_error is not None:
+            logger.error(
+                "Anthropic-compatible request failed after retries",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_REQUEST_FAILED",
+                    max_retries=max_retries,
+                    model=runtime.get("model"),
+                    error_type=type(last_error).__name__,
+                ),
+            )
             raise AnthropicCompatibleError(str(last_error)) from last_error
         raise AnthropicCompatibleError("Anthropic-compatible request failed without an explicit error")
 
@@ -310,6 +372,16 @@ class AnthropicCompatibleClient:
         timeout = runtime.get("timeout_seconds", 60)
 
         if not api_key:
+            logger.error(
+                "Anthropic-compatible models request is missing an API key",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_MODELS_MISSING_API_KEY",
+                    api_key_env=api_key_env,
+                    base_url=base_url,
+                ),
+            )
             raise AnthropicCompatibleError(f"Missing API key. Set {api_key_env} or runtime.api_key.")
 
         headers = {
@@ -339,6 +411,16 @@ class AnthropicCompatibleClient:
                     else f"{message} [retryable after {retry_after}s]",
                     retry_after=retry_after,
                 ) from exc
+            logger.error(
+                "Anthropic-compatible models endpoint returned a non-retryable HTTP error",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_MODELS_HTTP_ERROR",
+                    status_code=exc.code,
+                    base_url=base_url,
+                ),
+            )
             raise AnthropicCompatibleError(message) from exc
         except error.URLError as exc:
             raise RetryableAnthropicCompatibleError(
@@ -380,8 +462,32 @@ class AnthropicCompatibleClient:
                 last_error = exc
                 if attempt >= max_retries:
                     break
-                self._sleeper(_backoff_seconds(runtime, attempt, exc.retry_after))
+                delay = _backoff_seconds(runtime, attempt, exc.retry_after)
+                logger.warning(
+                    "Anthropic-compatible models request will be retried",
+                    extra=log_context(
+                        "provider.anthropic",
+                        "retry",
+                        error_code="ANTHROPIC_MODELS_RETRY",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay,
+                        base_url=runtime.get("base_url") or os.environ.get(runtime.get("base_url_env", "ANTHROPIC_BASE_URL")),
+                        error_type=type(exc).__name__,
+                    ),
+                )
+                self._sleeper(delay)
         if last_error is not None:
+            logger.error(
+                "Anthropic-compatible models request failed after retries",
+                extra=log_context(
+                    "provider.anthropic",
+                    "error",
+                    error_code="ANTHROPIC_MODELS_FAILED",
+                    max_retries=max_retries,
+                    error_type=type(last_error).__name__,
+                ),
+            )
             raise AnthropicCompatibleError(str(last_error)) from last_error
         raise AnthropicCompatibleError("Anthropic-compatible models request failed without an explicit error")
 
@@ -464,10 +570,31 @@ class AnthropicCompatibleTeacherProvider(TeacherProvider):
         try:
             payload = _parse_json_payload(content)
         except AnthropicCompatibleError:
+            logger.warning(
+                "Anthropic-compatible teacher returned invalid JSON",
+                extra=log_context(
+                    "provider.anthropic",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="ANTHROPIC_TEACHER_INVALID_JSON",
+                    sample_id=sample.get("id"),
+                    output_chars=len(content),
+                ),
+            )
             return False, None, content, "invalid_teacher_output"
 
         action = payload.get("action")
         if not isinstance(action, str) or not action.strip():
+            logger.warning(
+                "Anthropic-compatible teacher response is missing action",
+                extra=log_context(
+                    "provider.anthropic",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="ANTHROPIC_TEACHER_MISSING_ACTION",
+                    sample_id=sample.get("id"),
+                ),
+            )
             return False, None, content, "missing_action"
         return True, action.strip(), content, None
 
@@ -496,10 +623,31 @@ class AnthropicCompatibleEvalProvider(EvalProvider):
         try:
             payload = _parse_json_payload(content)
         except AnthropicCompatibleError:
+            logger.warning(
+                "Anthropic-compatible eval returned invalid JSON",
+                extra=log_context(
+                    "provider.anthropic",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="ANTHROPIC_EVAL_INVALID_JSON",
+                    sample_id=sample.get("id"),
+                    output_chars=len(content),
+                ),
+            )
             return False, None, content, "invalid_eval_output"
 
         action = payload.get("action")
         if not isinstance(action, str) or not action.strip():
+            logger.warning(
+                "Anthropic-compatible eval response is missing action",
+                extra=log_context(
+                    "provider.anthropic",
+                    "degrade",
+                    task_name=task.name,
+                    error_code="ANTHROPIC_EVAL_MISSING_ACTION",
+                    sample_id=sample.get("id"),
+                ),
+            )
             return False, None, content, "missing_action"
         return True, action.strip(), content, None
 

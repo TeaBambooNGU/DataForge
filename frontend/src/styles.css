@@ -165,6 +165,13 @@ select:focus-visible {
   justify-content: flex-end;
 }
 
+.desktop-quick-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -273,6 +280,56 @@ select:focus-visible {
   border-color: rgba(106, 168, 255, 0.3);
 }
 
+.desktop-home-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(101, 129, 163, 0.16);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.desktop-home-panel p,
+.desktop-home-head {
+  margin: 0;
+}
+
+.desktop-home-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.desktop-home-actions {
+  gap: 12px;
+}
+
+.ghost-button.desktop-home-action {
+  min-height: 46px;
+  padding-inline: 20px;
+  border-color: rgba(63, 131, 248, 0.38);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(226, 239, 255, 0.9)),
+    rgba(232, 241, 255, 0.86);
+  color: var(--paper);
+  font-weight: 800;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 12px 26px rgba(97, 126, 167, 0.14);
+}
+
+.ghost-button.desktop-home-action:hover {
+  border-color: rgba(63, 131, 248, 0.46);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(228, 240, 255, 0.9)),
+    rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 16px 32px rgba(63, 131, 248, 0.16);
+}
+
 .gear-button,
 .ghost-button,
 .artifact-download-button,
@@ -293,8 +350,15 @@ select:focus-visible {
     border-color 180ms ease,
     background 180ms ease,
     color 180ms ease,
-    box-shadow 180ms ease,
-    opacity 180ms ease;
+  box-shadow 180ms ease,
+  opacity 180ms ease;
+}
+
+.compact-ghost-button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  font-size: 0.9rem;
 }
 
 .gear-button {
@@ -538,6 +602,29 @@ select:focus-visible {
 .home-spotlight {
   display: grid;
   gap: 14px;
+}
+
+.ghost-button.home-spotlight-action {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 2px;
+  border-color: rgba(63, 131, 248, 0.1);
+  background:
+    linear-gradient(135deg, rgba(63, 131, 248, 0.96), rgba(106, 168, 255, 0.92), rgba(142, 224, 198, 0.88));
+  color: #f9fcff;
+  font-weight: 900;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 16px 34px rgba(63, 131, 248, 0.28);
+}
+
+.ghost-button.home-spotlight-action:hover {
+  border-color: rgba(63, 131, 248, 0.18);
+  background:
+    linear-gradient(135deg, rgba(48, 116, 235, 0.98), rgba(92, 155, 255, 0.94), rgba(126, 214, 190, 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 20px 40px rgba(63, 131, 248, 0.32);
 }
 
 .section-head h2,
@@ -2520,6 +2607,19 @@ select:focus-visible {
   line-height: 1.2;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.desktop-runtime-panel {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.desktop-runtime-actions {
+  padding: 18px 20px;
+  border: 1px solid rgba(101, 129, 163, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.68);
 }
 
 .provider-card {

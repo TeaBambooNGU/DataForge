@@ -113,6 +113,12 @@ Then start the local FastAPI workbench:
 uv run dataforge-web --host 127.0.0.1 --port 8000
 ```
 
+If you only need the API during local Electron development, the backend can also run without a built frontend bundle:
+
+```bash
+uv run dataforge-web --host 127.0.0.1 --port 8000 --project-root .
+```
+
 The web workbench lets you:
 
 - choose or create a task from the home screen
@@ -122,6 +128,84 @@ The web workbench lets you:
 - edit review records
 - trigger pipeline stages from the browser
 - open provider settings from the top-right gear icon
+
+### Build The Desktop App
+
+The desktop shell lives under `desktop/` and packages:
+
+- the Electron shell
+- a PyInstaller-built Python backend executable
+- the built frontend bundle
+- seed task configs copied into the user's workspace on first launch
+- generated application icons and DMG installer resources from source SVG assets
+
+Install desktop dependencies:
+
+```bash
+cd desktop
+npm install
+```
+
+If Electron binary downloads are unstable behind your network, install desktop dependencies with a proxy plus an Electron mirror:
+
+```bash
+cd desktop
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export ELECTRON_GET_USE_PROXY=true
+export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+npm install
+```
+
+Run the Electron shell in development mode:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+In another terminal:
+
+```bash
+cd desktop
+npm run dev
+```
+
+Build a macOS DMG:
+
+```bash
+cd desktop
+npm run dist:mac
+```
+
+If you are building the macOS package behind a proxy, keep the proxy variables but do not set `ELECTRON_MIRROR` during the DMG step, otherwise `dmg-builder` may be redirected to a mirror path that does not exist:
+
+```bash
+cd desktop
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export ELECTRON_GET_USE_PROXY=true
+npm run dist:mac
+```
+
+If you only want to verify the unpacked macOS app bundle first:
+
+```bash
+cd desktop
+npm run dist:mac:dir
+```
+
+Build a Windows NSIS installer:
+
+```bash
+cd desktop
+npm run dist:win
+```
+
+Packaged desktop builds create a writable user workspace under the system Documents directory as `DataForge/`, and the application seeds task configs there on first launch.
 
 ## CLI Usage
 
@@ -237,6 +321,13 @@ frontend/
   src/
   dist/
 
+desktop/
+  package.json
+  main.js
+  preload.js
+  buildResources/
+  scripts/
+
 docs/
   architecture.md
   DataForge-platform-mvp-design.md
@@ -250,6 +341,7 @@ Responsibilities:
 - `src/dataforge/providers/`: provider adapters
 - `tasks/<task>/configs/`: task-specific prompts, labels, rules, and task metadata
 - `frontend/`: React + Vite browser workbench source and build output
+- `desktop/`: Electron shell, backend build scripts, source icon assets, and installer config
 - `docs/`: architecture, design, and development planning
 
 ## Task Configuration

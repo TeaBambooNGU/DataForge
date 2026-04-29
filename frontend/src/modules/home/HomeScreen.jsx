@@ -3,6 +3,7 @@ import React from "react";
 import { classNames } from "../../lib/utils.js";
 
 export default function HomeScreen({
+  desktopInfo,
   tasks,
   settings,
   booting,
@@ -10,9 +11,21 @@ export default function HomeScreen({
   onOpenTask,
   onOpenCreateTask,
   onDeleteTask,
+  onOpenDesktopPath,
 }) {
   const totalRuns = tasks.reduce((sum, item) => sum + (item.run_count || 0), 0);
   const spotlightTask = tasks.find((item) => item.run_count > 0) || tasks[0] || null;
+  const workspaceState = desktopInfo?.workspaceState || null;
+  const onboardingTitle = workspaceState?.justCreated
+    ? "首次启动已完成工作区初始化"
+    : workspaceState?.needsOnboarding
+      ? "当前工作区还没有真实运行数据"
+      : "当前工作区已经可以继续推进";
+  const onboardingCopy = workspaceState?.justCreated
+    ? "DataForge 已在 Documents 目录下建立专用工作区，并写入默认 task 配置。现在可以直接创建第一个 Task 或进入已有模板。"
+    : workspaceState?.needsOnboarding
+      ? "当前工作区里还没有 run 产物。你可以新建 Task，或打开工作区直接查看 seeded configs 与日志。"
+      : `当前工作区已有 ${workspaceState?.runCount || 0} 个 run，可以直接从首页继续已有任务流。`;
 
   return (
     <main className="home-screen">
@@ -45,6 +58,46 @@ export default function HomeScreen({
               刷新任务列表
             </button>
           </div>
+
+          {desktopInfo ? (
+            <div className="desktop-home-panel">
+              <div className="desktop-home-head">
+                <span className="eyebrow">Desktop Context</span>
+                <span className={classNames("micro-chip", desktopInfo.isPackaged ? "is-success" : "is-warning")}>
+                  {desktopInfo.isPackaged ? "packaged" : "development"}
+                </span>
+              </div>
+              <strong>{onboardingTitle}</strong>
+              <p>
+                当前工作区位于 <strong>{desktopInfo.workspaceRoot}</strong>，backend 运行在{" "}
+                <strong>{desktopInfo.backendBaseUrl}</strong>。
+              </p>
+              <p>{onboardingCopy}</p>
+              {workspaceState ? (
+                <div className="task-card-meta">
+                  <span>{workspaceState.taskCount} tasks</span>
+                  <span>{workspaceState.runCount} runs</span>
+                  <span>{workspaceState.hasOnlySeedTasks ? "seed only" : "customized"}</span>
+                </div>
+              ) : null}
+              <div className="hero-actions desktop-home-actions">
+                <button
+                  className="ghost-button desktop-home-action"
+                  type="button"
+                  onClick={() => onOpenDesktopPath(desktopInfo.workspaceRoot, "工作区")}
+                >
+                  打开工作区
+                </button>
+                <button
+                  className="ghost-button desktop-home-action"
+                  type="button"
+                  onClick={() => onOpenDesktopPath(desktopInfo.logFilePath, "日志文件")}
+                >
+                  打开日志
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="hero-aside">
@@ -66,7 +119,11 @@ export default function HomeScreen({
                   <span>{`${spotlightTask.labels?.length || 0} labels`}</span>
                   <span>{spotlightTask.task_type || "workflow"}</span>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => onOpenTask(spotlightTask.name)}>
+                <button
+                  className="ghost-button home-spotlight-action"
+                  type="button"
+                  onClick={() => onOpenTask(spotlightTask.name)}
+                >
                   继续这个 Task
                 </button>
               </>

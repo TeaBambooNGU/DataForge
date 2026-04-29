@@ -48,6 +48,11 @@ frontend/.env
 frontend/.env.*
 !frontend/.env.example
 !frontend/.env.*.example
+desktop/node_modules/
+desktop/buildResources/generated/
+desktop/buildResources/icon.icns
+desktop/buildResources/icon.ico
+desktop/buildResources/dmg-background.png
 
 # Logs
 *.log

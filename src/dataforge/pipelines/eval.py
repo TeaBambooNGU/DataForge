@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from dataforge.core.eval_runner import (
@@ -14,13 +15,18 @@ from dataforge.core.eval_runner import (
 )
 from dataforge.core.exporters import export_eval_dataset
 from dataforge.core.io import write_run_manifest
+from dataforge.core.logging_config import task_run_context
 from dataforge.core.registry import TaskRun
 from dataforge.core.storage import load_artifact_records, save_artifact_records, save_blob_artifact
 from dataforge.core.versioning import build_dataset_version_summary
 from dataforge.providers import get_eval_provider
 
 
+logger = logging.getLogger(__name__)
+
+
 def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
+    logger.info("Eval stage started", extra=task_run_context(task, "pipeline.eval", "start"))
     gold_source = gold_path or task.path_for("gold_eval")
     gold_samples = load_artifact_records(
         task.project_root,
@@ -28,16 +34,31 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
         run_id=task.run_id,
         artifact_key="gold_eval",
     )
+    if not gold_samples:
+        logger.warning(
+            "Eval stage has no gold samples",
+            extra=task_run_context(
+                task,
+                "pipeline.eval",
+                "degrade",
+                error_code="EVAL_NO_GOLD_SAMPLES",
+                input_path=gold_source,
+            ),
+        )
     hard_cases = load_artifact_records(
         task.project_root,
         task_name=task.name,
         run_id=task.run_id,
         artifact_key="hard_cases",
     )
-    eval_provider = get_eval_provider(task.runtime.get("eval", {}).get("provider", "mock"))
+    provider_name = task.runtime.get("eval", {}).get("provider", "mock")
+    eval_provider = get_eval_provider(provider_name)
     eval_rows = []
+    parse_failures = 0
     for sample in gold_samples:
         parse_ok, predicted_label, raw_output, error_code = eval_provider.predict_sample(task, sample)
+        if not parse_ok:
+            parse_failures += 1
         eval_rows.append(
             {
                 "id": sample["id"],
@@ -51,6 +72,19 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
                 "difficulty": sample.get("metadata", {}).get("difficulty"),
                 "tags": sample.get("metadata", {}).get("tags", []),
             }
+        )
+    if parse_failures:
+        logger.warning(
+            "Eval stage completed predictions with parse failures",
+            extra=task_run_context(
+                task,
+                "pipeline.eval",
+                "degrade",
+                error_code="EVAL_PARSE_FAILURES",
+                parse_failures=parse_failures,
+                gold_samples=len(gold_samples),
+                provider=provider_name,
+            ),
         )
     metrics = evaluate_predictions(eval_rows, {sample["id"] for sample in hard_cases})
 
@@ -81,6 +115,18 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
         promptfoo_results_path,
         cwd=task.project_root,
     )
+    if promptfoo_summary.get("status") != "ok":
+        logger.warning(
+            "Promptfoo eval did not complete successfully",
+            extra=task_run_context(
+                task,
+                "pipeline.eval",
+                "degrade",
+                error_code="EVAL_PROMPTFOO_NOT_OK",
+                status=promptfoo_summary.get("status"),
+                results_path=promptfoo_results_path,
+            ),
+        )
     eval_result = build_eval_result(
         eval_rows,
         metrics,
@@ -167,6 +213,21 @@ def run(task: TaskRun, *, gold_path: Path | None = None) -> dict[str, Path]:
         run_id=task.run_id,
     )
     task.record_stage("eval", manifest, manifest_path)
+    logger.info(
+        "Eval stage completed",
+        extra=task_run_context(
+            task,
+            "pipeline.eval",
+            "end",
+            provider=provider_name,
+            gold_samples=len(gold_samples),
+            hard_cases=len(hard_cases),
+            predictions=len(eval_rows),
+            parse_failures=parse_failures,
+            promptfoo_status=promptfoo_summary.get("status"),
+            overall_accuracy=metrics.get("overall_accuracy"),
+        ),
+    )
     return {
         "eval_export": eval_export_path,
         "eval_export_metadata": eval_export_metadata_path,

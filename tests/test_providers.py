@@ -1,4 +1,5 @@
 import io
+import logging
 from pathlib import Path
 from urllib import error
 
@@ -534,7 +535,8 @@ def test_minimax_provider_sets_default_env_names() -> None:
     assert runtime["base_url_env"] == "MINIMAX_BASE_URL"
 
 
-def test_openai_compatible_chat_client_retries_on_503() -> None:
+def test_openai_compatible_chat_client_retries_on_503(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="dataforge.providers.openai_compatible")
     opener = _SequenceOpener(
         [
             error.HTTPError(
@@ -561,6 +563,10 @@ def test_openai_compatible_chat_client_retries_on_503() -> None:
     assert content == '{"action":"chat"}'
     assert opener.calls == 2
     assert sleeps == [1.0]
+    retry_records = [record for record in caplog.records if getattr(record, "error_code", "") == "OPENAI_REQUEST_RETRY"]
+    assert len(retry_records) == 1
+    assert retry_records[0].context["attempt"] == 1
+    assert "test-key" not in caplog.text
 
 
 def test_openai_compatible_chat_client_does_not_retry_on_400() -> None:
@@ -616,7 +622,8 @@ def test_openai_compatible_chat_client_lists_models() -> None:
     assert opener.calls == 1
 
 
-def test_anthropic_compatible_chat_client_retries_on_503() -> None:
+def test_anthropic_compatible_chat_client_retries_on_503(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="dataforge.providers.anthropic_compatible")
     opener = _SequenceOpener(
         [
             error.HTTPError(
@@ -644,6 +651,10 @@ def test_anthropic_compatible_chat_client_retries_on_503() -> None:
     assert content == '{"action":"chat"}'
     assert opener.calls == 2
     assert sleeps == [1.0]
+    retry_records = [record for record in caplog.records if getattr(record, "error_code", "") == "ANTHROPIC_REQUEST_RETRY"]
+    assert len(retry_records) == 1
+    assert retry_records[0].context["attempt"] == 1
+    assert "test-key" not in caplog.text
 
 
 def test_anthropic_compatible_chat_client_does_not_retry_on_400() -> None:

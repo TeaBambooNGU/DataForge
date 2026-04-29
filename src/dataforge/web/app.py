@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import shutil
@@ -11,12 +12,14 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from dataforge.core.env import apply_env_updates, load_dotenv, read_dotenv, write_dotenv_updates
 from dataforge.core.io import read_json, read_jsonl, read_text, read_yaml, utc_now, write_json, write_jsonl, write_text, write_yaml
+from dataforge.core.logging_config import configure_logging, log_context
 from dataforge.core.registry import (
     RUN_ARTIFACT_PATHS,
     TaskConfig,
@@ -57,6 +60,8 @@ from dataforge.pipelines import build_gold, classify, eval as eval_pipeline, fil
 from dataforge.providers.anthropic_compatible import AnthropicCompatibleClient, AnthropicCompatibleError
 from dataforge.providers.openai_compatible import OpenAICompatibleChatClient, OpenAICompatibleError
 
+
+logger = logging.getLogger(__name__)
 
 COMMAND_HANDLERS = {
     "generate": generate.run,
@@ -675,6 +680,19 @@ def _probe_llm_connection(provider_name: str, runtime: dict[str, Any], *, projec
             models, latest_model = _discover_runtime_models(implementation, runtime)
         except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
             models_error = str(exc)
+            logger.warning(
+                "LLM model discovery failed",
+                extra=log_context(
+                    "web.llm",
+                    "degrade",
+                    error_code="LLM_MODEL_DISCOVERY_FAILED",
+                    provider=provider_name,
+                    implementation=implementation,
+                    model=runtime.get("model"),
+                    endpoint=endpoint,
+                    error_type=type(exc).__name__,
+                ),
+            )
 
     discovered_model_ids = {item["value"] for item in models}
     if latest_model and (not probe_runtime.get("model") or probe_runtime.get("model") not in discovered_model_ids):
@@ -704,6 +722,20 @@ def _probe_llm_connection(provider_name: str, runtime: dict[str, Any], *, projec
         else:
             raise ValueError(f"Unsupported provider: {implementation}")
     except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
+        logger.error(
+            "LLM connection test failed",
+            exc_info=True,
+            extra=log_context(
+                "web.llm",
+                "error",
+                error_code="LLM_CONNECTION_TEST_FAILED",
+                provider=provider_name,
+                implementation=implementation,
+                model=probe_runtime.get("model"),
+                endpoint=endpoint,
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
+            ),
+        )
         return {
             "ok": False,
             "provider": provider_name,
@@ -729,6 +761,20 @@ def _probe_llm_connection(provider_name: str, runtime: dict[str, Any], *, projec
     }
     if models_error:
         result["models_error"] = models_error
+    logger.info(
+        "LLM connection test completed",
+        extra=log_context(
+            "web.llm",
+            "end",
+            provider=provider_name,
+            implementation=implementation,
+            model=probe_runtime.get("model"),
+            endpoint=endpoint,
+            latency_ms=result["latency_ms"],
+            models_count=len(models),
+            models_error=bool(models_error),
+        ),
+    )
     return result
 
 
@@ -1252,25 +1298,53 @@ def _ensure_command_is_runnable(task: TaskConfig, command: str, task_run: TaskRu
         )
 
 
-def create_app(project_root: Path | None = None) -> FastAPI:
+def create_app(
+    project_root: Path | None = None,
+    frontend_dist_dir: Path | None = None,
+    allowed_origins: list[str] | None = None,
+) -> FastAPI:
     resolved_root = (project_root or Path.cwd()).resolve()
-    frontend_dir = resolved_root / "frontend"
-    frontend_dist_dir = frontend_dir / "dist"
-    if not frontend_dist_dir.exists():
-        raise FileNotFoundError(
-            f"Frontend build directory not found: {frontend_dist_dir}. "
-            "Run `cd frontend && npm install && npm run build` first."
-        )
+    resolved_frontend_dist = (
+        frontend_dist_dir.resolve() if frontend_dist_dir is not None else (resolved_root / "frontend" / "dist").resolve()
+    )
+    has_frontend = resolved_frontend_dist.exists()
 
     load_dotenv(resolved_root / ".env")
+    configure_logging()
 
     app = FastAPI(title="DataForge Workbench", version="0.1.0")
     app.state.project_root = resolved_root
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist_dir)), name="assets")
+    app.state.frontend_dist_dir = resolved_frontend_dist if has_frontend else None
+    normalized_allowed_origins = [origin.strip() for origin in (allowed_origins or []) if origin.strip()]
+    if normalized_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=normalized_allowed_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    if has_frontend:
+        app.mount("/assets", StaticFiles(directory=str(resolved_frontend_dist)), name="assets")
+    logger.info(
+        "Web app initialized",
+        extra=log_context(
+            "web.app",
+            "start",
+            project_root=resolved_root,
+            frontend_available=has_frontend,
+            frontend_dist_dir=resolved_frontend_dist,
+            allowed_origins_count=len(normalized_allowed_origins),
+        ),
+    )
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "project_root": str(resolved_root),
+            "frontend_available": has_frontend,
+        }
 
     @app.get("/api/settings/llm")
     def get_global_llm_settings() -> dict[str, Any]:
@@ -1281,7 +1355,24 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         try:
             settings = _save_global_llm_settings(resolved_root, payload)
         except ValueError as exc:
+            logger.warning(
+                "LLM settings update rejected",
+                extra=log_context(
+                    "web.settings",
+                    "degrade",
+                    error_code="LLM_SETTINGS_INVALID",
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
+        logger.info(
+            "LLM settings updated",
+            extra=log_context(
+                "web.settings",
+                "end",
+                providers_count=len(settings.get("providers", [])),
+            ),
+        )
         return {"ok": True, "settings": settings}
 
     @app.post("/api/settings/llm/test")
@@ -1312,10 +1403,37 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             normalized = _normalize_task_create_payload(payload)
             task = create_task_scaffold(resolved_root, normalized)
         except FileExistsError as exc:
+            logger.warning(
+                "Task creation rejected",
+                extra=log_context(
+                    "web.tasks",
+                    "degrade",
+                    error_code="TASK_CREATE_CONFLICT",
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
         except ValueError as exc:
+            logger.warning(
+                "Task creation rejected",
+                extra=log_context(
+                    "web.tasks",
+                    "degrade",
+                    error_code="TASK_CREATE_INVALID",
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
 
+        logger.info(
+            "Task created",
+            extra=log_context(
+                "web.tasks",
+                "end",
+                task_name=task.name,
+                task_root=task.task_root,
+            ),
+        )
         return {
             "ok": True,
             "task": _serialize_task(resolved_root, task.name),
@@ -1331,6 +1449,15 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def delete_task(task_name: str) -> dict[str, Any]:
         task = _load_task(resolved_root, task_name)
         remaining_tasks = _delete_task(task)
+        logger.info(
+            "Task deleted",
+            extra=log_context(
+                "web.tasks",
+                "end",
+                task_name=task_name,
+                remaining_tasks_count=len(remaining_tasks),
+            ),
+        )
         return {
             "ok": True,
             "deleted_task_name": task_name,
@@ -1356,8 +1483,22 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             _save_task_config_files(task, normalized)
             updated_task = _load_task(resolved_root, task_name)
         except ValueError as exc:
+            logger.warning(
+                "Task config update rejected",
+                extra=log_context(
+                    "web.tasks",
+                    "degrade",
+                    task_name=task_name,
+                    error_code="TASK_CONFIG_INVALID",
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
 
+        logger.info(
+            "Task config updated",
+            extra=log_context("web.tasks", "end", task_name=task_name),
+        )
         return {
             "ok": True,
             "config": _serialize_task_config_files(updated_task),
@@ -1379,6 +1520,16 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     def delete_run(task_name: str, run_id: str) -> dict[str, Any]:
         task = _load_task(resolved_root, task_name)
         remaining_runs = _delete_run(task, run_id)
+        logger.info(
+            "Run deleted",
+            extra=log_context(
+                "web.runs",
+                "end",
+                task_name=task_name,
+                run_id=run_id,
+                remaining_runs_count=len(remaining_runs),
+            ),
+        )
         return {
             "ok": True,
             "deleted_run_id": run_id,
@@ -1389,20 +1540,91 @@ def create_app(project_root: Path | None = None) -> FastAPI:
     @app.post("/api/tasks/{task_name}/commands/{command}")
     def run_command(task_name: str, command: str, payload: CommandRequest) -> dict[str, Any]:
         task = _load_task(resolved_root, task_name)
+        resolved_run_id = payload.run_id
         try:
             if command not in SUPPORTED_COMMANDS:
+                logger.warning(
+                    "Web command rejected",
+                    extra=log_context(
+                        "web.commands",
+                        "degrade",
+                        task_name=task_name,
+                        run_id=resolved_run_id,
+                        error_code="WEB_COMMAND_UNSUPPORTED",
+                        command=command,
+                    ),
+                )
                 raise _http_404(f"Unsupported command: {command}")
             task_run = resolve_task_run(task, command=command, run_id=payload.run_id)
+            resolved_run_id = task_run.run_id
+            logger.info(
+                "Web command started",
+                extra=log_context(
+                    "web.commands",
+                    "start",
+                    task_name=task_name,
+                    run_id=task_run.run_id,
+                    command=command,
+                ),
+            )
             _ensure_command_is_runnable(task, command, task_run)
             result = _run_command(command, task_run)
             entry = _find_run_entry(task, task_run.run_id)
         except FileNotFoundError as exc:
+            logger.warning(
+                "Web command rejected",
+                extra=log_context(
+                    "web.commands",
+                    "degrade",
+                    task_name=task_name,
+                    run_id=resolved_run_id,
+                    error_code="WEB_COMMAND_INPUT_MISSING",
+                    command=command,
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
         except ValueError as exc:
+            logger.warning(
+                "Web command rejected",
+                extra=log_context(
+                    "web.commands",
+                    "degrade",
+                    task_name=task_name,
+                    run_id=resolved_run_id,
+                    error_code="WEB_COMMAND_INVALID",
+                    command=command,
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
         except (OpenAICompatibleError, AnthropicCompatibleError) as exc:
+            logger.error(
+                "Web command failed because provider returned an error",
+                exc_info=True,
+                extra=log_context(
+                    "web.commands",
+                    "error",
+                    task_name=task_name,
+                    run_id=resolved_run_id,
+                    error_code="WEB_COMMAND_PROVIDER_FAILED",
+                    command=command,
+                ),
+            )
             raise _http_400(str(exc)) from exc
 
+        logger.info(
+            "Web command completed",
+            extra=log_context(
+                "web.commands",
+                "end",
+                task_name=task_name,
+                run_id=task_run.run_id,
+                command=command,
+                status=entry.get("status"),
+                last_stage=entry.get("last_stage"),
+            ),
+        )
         return {
             "ok": True,
             "command": command,
@@ -1532,9 +1754,32 @@ def create_app(project_root: Path | None = None) -> FastAPI:
         try:
             target = _save_review_records(run, payload.records, payload.reviewer)
         except ValueError as exc:
+            logger.warning(
+                "Review records update rejected",
+                extra=log_context(
+                    "web.review",
+                    "degrade",
+                    task_name=task_name,
+                    run_id=run_id,
+                    error_code="REVIEW_RECORDS_INVALID",
+                    error=str(exc),
+                ),
+            )
             raise _http_400(str(exc)) from exc
 
         records = load_review_records_from_storage(resolved_root, task_name=task_name, run_id=run_id)
+        logger.info(
+            "Review records updated",
+            extra=log_context(
+                "web.review",
+                "end",
+                task_name=task_name,
+                run_id=run_id,
+                records_count=len(records),
+                reviewer=payload.reviewer,
+                target=target,
+            ),
+        )
         return {
             "ok": True,
             "path": str(target),
@@ -1542,9 +1787,11 @@ def create_app(project_root: Path | None = None) -> FastAPI:
             "summary": summarize_review_records(records),
         }
 
-    @app.get("/", include_in_schema=False)
-    def workbench() -> FileResponse:
-        return FileResponse(frontend_dist_dir / "index.html")
+    if has_frontend:
+
+        @app.get("/", include_in_schema=False)
+        def workbench() -> FileResponse:
+            return FileResponse(resolved_frontend_dist / "index.html")
 
     return app
 
@@ -1554,9 +1801,25 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--project-root", default=".")
+    parser.add_argument("--frontend-dist", default=None)
+    parser.add_argument("--allow-origin", action="append", default=[])
     args = parser.parse_args()
 
-    app = create_app(Path(args.project_root))
+    app = create_app(
+        Path(args.project_root),
+        frontend_dist_dir=Path(args.frontend_dist) if args.frontend_dist else None,
+        allowed_origins=args.allow_origin,
+    )
+    logger.info(
+        "Web server starting",
+        extra=log_context(
+            "web.server",
+            "start",
+            host=args.host,
+            port=args.port,
+            project_root=Path(args.project_root).resolve(),
+        ),
+    )
     uvicorn.run(app, host=args.host, port=args.port)
 
 

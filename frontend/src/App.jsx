@@ -8,7 +8,7 @@ import React, {
 } from "react";
 
 import { DEFAULT_CREATE_TASK, STAGE_ACTIONS, WORKSPACE_TABS } from "./constants/app.js";
-import { api } from "./lib/api.js";
+import { api, resolveApiUrl } from "./lib/api.js";
 import {
   buildArtifactSummary,
   createDefaultArtifactKey,
@@ -71,6 +71,7 @@ function getTaskConfigCardLabel(cardKey) {
 }
 
 function App() {
+  const [desktopInfo, setDesktopInfo] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [screen, setScreen] = useState("home");
   const [activeTask, setActiveTask] = useState(null);
@@ -287,7 +288,9 @@ function App() {
     if (!activeTask?.name || !selectedRun?.run_id || artifactKey !== "student_train") {
       return null;
     }
-    return `/api/tasks/${activeTask.name}/runs/${selectedRun.run_id}/artifacts/${artifactKey}/download`;
+    return resolveApiUrl(
+      `/api/tasks/${activeTask.name}/runs/${selectedRun.run_id}/artifacts/${artifactKey}/download`
+    );
   }, [activeTask?.name, artifactKey, selectedRun?.run_id]);
 
   const recommendedArtifactKeys = useMemo(
@@ -401,12 +404,29 @@ function App() {
   const loadBoot = useCallback(async () => {
     setBooting(true);
     try {
-      const [taskPayload, settingsPayload] = await Promise.all([api("/api/tasks"), api("/api/settings/llm")]);
+      const desktopInfoPromise =
+        window.dataforgeDesktop?.getAppInfo?.().catch(() => null) || Promise.resolve(null);
+      const [taskPayload, settingsPayload, nextDesktopInfo] = await Promise.all([
+        api("/api/tasks"),
+        api("/api/settings/llm"),
+        desktopInfoPromise,
+      ]);
       const nextTasks = taskPayload.items || [];
       const normalizedSettings = normalizeSettingsPayload(settingsPayload);
+      setDesktopInfo(nextDesktopInfo);
       setTasks(nextTasks);
       setSettings(normalizedSettings);
       setSettingsDraft(deepClone(normalizedSettings));
+      if (nextDesktopInfo?.workspaceState?.justCreated) {
+        setMessage("已初始化 DataForge 工作区");
+        setMessageTone("success");
+      } else if (nextDesktopInfo?.workspaceState?.needsOnboarding) {
+        setMessage("工作区已就绪，等待首个 Run");
+        setMessageTone("warning");
+      } else {
+        setMessage("DataForge 已连接");
+        setMessageTone("success");
+      }
       if (activeTask) {
         const stillExists = nextTasks.find((item) => item.name === activeTask.name);
         if (!stillExists) {
@@ -423,6 +443,21 @@ function App() {
       setBooting(false);
     }
   }, [activeTask]);
+
+  async function openDesktopPath(targetPath, label) {
+    if (!targetPath || !window.dataforgeDesktop?.openPath) {
+      return;
+    }
+    try {
+      const error = await window.dataforgeDesktop.openPath(targetPath);
+      if (error) {
+        throw new Error(error);
+      }
+      setFlashMessage(`已打开${label}`, "success");
+    } catch (error) {
+      setFlashMessage(error instanceof Error ? error.message : `打开${label}失败`, "error");
+    }
+  }
 
   const loadRun = useCallback(async (taskName, runId) => {
     if (!taskName || !runId) {
@@ -1170,6 +1205,32 @@ function App() {
             <div className={classNames("message-pill", messageTone && `is-${messageTone}`)}>
               {message}
             </div>
+            {desktopInfo ? (
+              <div className="desktop-quick-actions">
+                <span
+                  className={classNames(
+                    "micro-chip",
+                    desktopInfo.isPackaged ? "is-success" : "is-warning"
+                  )}
+                >
+                  {desktopInfo.isPackaged ? "桌面版" : "开发壳"}
+                </span>
+                <button
+                  className="ghost-button compact-ghost-button"
+                  type="button"
+                  onClick={() => openDesktopPath(desktopInfo.workspaceRoot, "工作区")}
+                >
+                  工作区
+                </button>
+                <button
+                  className="ghost-button compact-ghost-button"
+                  type="button"
+                  onClick={() => openDesktopPath(desktopInfo.logFilePath, "日志文件")}
+                >
+                  日志
+                </button>
+              </div>
+            ) : null}
             <button
               className="gear-button"
               type="button"
@@ -1185,6 +1246,7 @@ function App() {
 
       {screen === "home" ? (
         <HomeScreen
+          desktopInfo={desktopInfo}
           tasks={tasks}
           settings={settings}
           booting={booting}
@@ -1192,6 +1254,7 @@ function App() {
           onOpenTask={openTask}
           onOpenCreateTask={() => setCreateTaskOpen(true)}
           onDeleteTask={handleDeleteTask}
+          onOpenDesktopPath={openDesktopPath}
         />
       ) : (
         <main className="workspace-screen">
@@ -1450,6 +1513,7 @@ function App() {
 
       {settingsOpen ? (
         <SettingsDrawer
+          desktopInfo={desktopInfo}
           settings={settings}
           settingsDraft={settingsDraft}
           settingsView={settingsView}
@@ -1477,6 +1541,7 @@ function App() {
           updateProvider={updateProvider}
           updateCustomProviderDraft={updateCustomProviderDraft}
           setFlashMessage={setFlashMessage}
+          onOpenDesktopPath={openDesktopPath}
         />
       ) : null}
 
